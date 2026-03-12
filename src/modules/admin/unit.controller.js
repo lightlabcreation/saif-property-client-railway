@@ -488,8 +488,9 @@ exports.getVacantBedrooms = async (req, res) => {
         });
         const takenByLease = activeBedroomLeases.map(l => l.bedroomId);
 
-        // Combine all taken IDs
-        let takenIds = [...new Set([...takenByUser, ...takenByLease])];
+        // Combine all taken IDs - Only hide bedrooms that already have an active or pending Lease record.
+        // This allows bedrooms assigned to residents (as occupants) to remain visible for lease creation.
+        let takenIds = [...new Set(takenByLease)];
 
         // If editing, allow the current bedroom to remain in the list
         if (includeId) {

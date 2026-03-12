@@ -755,10 +755,23 @@ exports.createLease = catchAsync(async (req, res, next) => {
             const hasExistingResidentLease = unit.leases.some(l => l.status === 'Active' && l.bedroomId === bId && l.tenant.type === 'RESIDENT');
 
             if (bedroom.status !== 'Vacant') {
-                // Special case: Allow if it's "Occupied" by a Company Lease but has no resident assigned yet
-                if (hasCompanyLease && !hasExistingResidentLease) {
-                    // This is fine, we are assigning the resident to a bedroom reserved by the company
-                } else {
+                // Check if there is an actual Active or Draft lease for this specific bedroom
+                const existingLeaseForRoom = unit.leases.find(l => 
+                    l.bedroomId === bId && 
+                    (l.status === 'Active' || (l.status === 'DRAFT' && l.tenantId !== tId))
+                );
+
+                if (existingLeaseForRoom) {
+                    throw new AppError(`Bedroom ${bedroom.bedroomNumber} is already occupied with an active or pending lease.`, 400);
+                } 
+                
+                // If it's 'Occupied' but has no active lease (likely just a resident assignment), we allow it.
+                // Also allow the existing Company Lease special case.
+                const isCompanyLeaseSpecialCase = hasCompanyLease && !hasExistingResidentLease;
+                const isResidentOccupiedNoLease = bedroom.status === 'Occupied' && !existingLeaseForRoom;
+
+                if (!isCompanyLeaseSpecialCase && !isResidentOccupiedNoLease) {
+                    // Block for any other non-vacant status (e.g. Under Maintenance)
                     throw new AppError(`Bedroom ${bedroom.bedroomNumber} is not available (current status: ${bedroom.status})`, 400);
                 }
             }
