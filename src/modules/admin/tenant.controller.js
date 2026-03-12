@@ -11,69 +11,126 @@ const allowedOrigins = require('../../config/allowedOrigins');
 // GET /api/admin/tenants
 exports.getAllTenants = async (req, res) => {
     try {
-        const { propertyId } = req.query;
+        const { propertyId, search, page = 1, limit = 10 } = req.query;
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const take = parseInt(limit);
+
         const whereClause = { role: 'TENANT' }; // Show all tenants including residents as requested
 
         if (propertyId) {
-            whereClause.leases = {
-                some: {
-                    status: { in: ['Active', 'DRAFT'] },
-                    unit: { propertyId: parseInt(propertyId) }
+            whereClause.OR = [
+                {
+                    leases: {
+                        some: {
+                            status: { in: ['Active', 'DRAFT'] },
+                            unit: { propertyId: parseInt(propertyId) }
+                        }
+                    }
+                },
+                {
+                    buildingId: parseInt(propertyId)
                 }
-            };
+            ];
         }
 
-        const tenants = await prisma.user.findMany({
-            where: whereClause,
-            include: {
-                leases: {
-                    where: { status: { in: ['Active', 'DRAFT'] } },
-                    include: {
-                        unit: {
-                            include: {
-                                property: true
+        if (search) {
+            const searchTerms = search.split(' ').filter(term => term.length > 0);
+            const searchConditions = searchTerms.map(term => ({
+                OR: [
+                    { firstName: { contains: term, mode: 'insensitive' } },
+                    { lastName: { contains: term, mode: 'insensitive' } },
+                    { name: { contains: term, mode: 'insensitive' } },
+                    { email: { contains: term, mode: 'insensitive' } },
+                    { phone: { contains: term, mode: 'insensitive' } },
+                    { companyName: { contains: term, mode: 'insensitive' } },
+                    { 
+                        leases: {
+                            some: {
+                                unit: {
+                                    OR: [
+                                        { unitNumber: { contains: term, mode: 'insensitive' } },
+                                        { property: { name: { contains: term, mode: 'insensitive' } } }
+                                    ]
+                                }
                             }
                         }
-                    }
-                },
-                insurances: true,
-                documents: true,
-                residents: {
-                    include: {
+                    },
+                    {
                         residentLease: {
-                            include: { unit: true }
-                        },
-                        leases: {
-                            where: { status: { in: ['Active', 'DRAFT'] } },
-                            include: { unit: true }
-                        }
-                    }
-                },
-                parent: {
-                    include: {
-                        leases: {
-                            where: { status: { in: ['Active', 'DRAFT'] } }
-                        }
-                    }
-                },
-                companyContacts: true,
-                residentLease: {
-                    include: {
-                        unit: {
-                            include: {
-                                property: true
+                            unit: {
+                                OR: [
+                                    { unitNumber: { contains: term, mode: 'insensitive' } },
+                                    { property: { name: { contains: term, mode: 'insensitive' } } }
+                                ]
                             }
                         }
                     }
-                }
-            }
-        });
+                ]
+            }));
 
-        const sortedTenants = [...tenants].sort((a, b) => b.id - a.id);
+            if (whereClause.OR) {
+                // If we already have a propertyId filter, we need to AND the search conditions
+                whereClause.AND = searchConditions;
+            } else {
+                whereClause.AND = searchConditions;
+            }
+        }
+
+        const [tenants, totalCount] = await Promise.all([
+            prisma.user.findMany({
+                where: whereClause,
+                include: {
+                    leases: {
+                        where: { status: { in: ['Active', 'DRAFT'] } },
+                        include: {
+                            unit: {
+                                include: {
+                                    property: true
+                                }
+                            }
+                        }
+                    },
+                    insurances: true,
+                    documents: true,
+                    residents: {
+                        include: {
+                            residentLease: {
+                                include: { unit: true }
+                            },
+                            leases: {
+                                where: { status: { in: ['Active', 'DRAFT'] } },
+                                include: { unit: true }
+                            }
+                        }
+                    },
+                    parent: {
+                        include: {
+                            leases: {
+                                where: { status: { in: ['Active', 'DRAFT'] } }
+                            }
+                        }
+                    },
+                    companyContacts: true,
+                    residentLease: {
+                        include: {
+                            unit: {
+                                include: {
+                                    property: true
+                                }
+                            }
+                        }
+                    }
+                },
+                orderBy: { id: 'desc' },
+                skip,
+                take
+            }),
+            prisma.user.count({ where: whereClause })
+        ]);
 
         // Fetch communication logs for credential invitations to identify who has already been invited
-        const tenantEmails = sortedTenants.map(t => t.email).filter(Boolean);
-        const tenantPhones = sortedTenants.map(t => t.phone).filter(Boolean);
+        const tenantEmails = tenants.map(t => t.email).filter(Boolean);
+        const tenantPhones = tenants.map(t => t.phone).filter(Boolean);
 
         const inviteLogs = await prisma.communicationLog.findMany({
             where: {
@@ -93,7 +150,7 @@ exports.getAllTenants = async (req, res) => {
         const units = await prisma.unit.findMany({ include: { property: true } });
         const unitMap = new Map(units.map(u => [u.id, u]));
 
-        const formatted = sortedTenants.map(t => {
+        const formatted = tenants.map(t => {
             // Find active lease first
             let activeLease = t.leases.find(l => l.status === 'Active') ||
                 (t.residentLease?.status === 'Active' ? t.residentLease : null) ||
@@ -161,7 +218,15 @@ exports.getAllTenants = async (req, res) => {
             };
         });
 
-        res.json(formatted);
+        res.json({
+            data: formatted,
+            meta: {
+                total: totalCount,
+                page: parseInt(page),
+                limit: parseInt(limit),
+                totalPages: Math.ceil(totalCount / parseInt(limit))
+            }
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error' });
