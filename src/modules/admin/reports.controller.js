@@ -263,6 +263,12 @@ exports.getRentRoll = async (req, res) => {
                 }
             }
         });
+        // Calculate Total Outstanding Balance (Unpaid rent across all units)
+        const unpaidInvoices = await prisma.invoice.findMany({
+            where: { status: { notIn: ['paid', 'draft'] } },
+            select: { balanceDue: true }
+        });
+        const totalOutstandingBalance = unpaidInvoices.reduce((sum, i) => sum + parseFloat(i.balanceDue), 0);
 
         res.json({
             summary: {
@@ -271,7 +277,8 @@ exports.getRentRoll = async (req, res) => {
                 occupiedBedrooms,
                 vacantUnits,
                 vacantBedrooms,
-                totalMonthlyRent
+                totalMonthlyRent,
+                totalOutstandingBalance
             },
             rentRoll: rentRollArray
         });

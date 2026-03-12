@@ -69,6 +69,15 @@ exports.getDashboardStats = async (req, res) => {
             _sum: { paidAmount: true }
         });
         const actualRevenue = parseFloat(invoiceAgg._sum.paidAmount) || 0;
+        // Calculate Outstanding Dues (Total Balance Due on unpaid invoices)
+        const unpaidInvoices = await prisma.invoice.findMany({
+            where: {
+                status: { notIn: ['paid', 'draft'] },
+                unit: unitFilter
+            },
+            select: { balanceDue: true }
+        });
+        const outstandingDues = unpaidInvoices.reduce((sum, i) => sum + parseFloat(i.balanceDue), 0);
 
         // 5. Recent Activity — multi-source: leases, payments, tenants
         const [recentLeases, recentPayments, recentTenants] = await Promise.all([
@@ -196,6 +205,7 @@ exports.getDashboardStats = async (req, res) => {
             },
             projectedRevenue,
             actualRevenue,
+            outstandingDues,
             monthlyRevenue: projectedRevenue, // Backward compatibility
             insuranceAlerts: {
                 expired: expiredInsurance,

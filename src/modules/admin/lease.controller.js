@@ -698,10 +698,15 @@ exports.createLease = catchAsync(async (req, res, next) => {
 
         // VALIDATION FOR FULL UNIT LEASE
         if (isFullUnitLease) {
-            // Check if any bedrooms are already occupied
-            const occupiedBedrooms = unit.bedroomsList.filter(b => b.status === 'Occupied');
-            if (occupiedBedrooms.length > 0) {
-                throw new AppError(`Cannot create full unit lease: ${occupiedBedrooms.length} bedroom(s) are already occupied. Please ensure all bedrooms are vacant.`, 400);
+            // Only block if the bedroom status is 'Occupied' AND there's an actual active lease for it
+            // This prevents old 'Occupied' statuses (left over from expired leases) from blocking new leases.
+            const occupiedWithActiveLease = unit.bedroomsList.filter(b => {
+                const hasActiveLease = unit.leases.some(l => l.status === 'Active' && l.bedroomId === b.id);
+                return b.status === 'Occupied' && hasActiveLease;
+            });
+
+            if (occupiedWithActiveLease.length > 0) {
+                throw new AppError(`Cannot create full unit lease: ${occupiedWithActiveLease.length} bedroom(s) are already occupied with active leases. Please ensure all bedrooms are vacant.`, 400);
             }
 
             // Check for EXISTING Active lease for this unit

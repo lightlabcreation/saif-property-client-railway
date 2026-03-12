@@ -75,28 +75,37 @@ exports.getOwnerDashboardStats = async (req, res) => {
             }
         });
 
-        // Sum Rent Invoices only
+        // Sum All Unpaid Invoices (Rent + Deposits + Fees) - excluding drafts
+        const duesAgg = await prisma.invoice.aggregate({
+            where: {
+                unit: { propertyId: { in: propertyIds } },
+                status: { notIn: ['draft', 'cancelled', 'paid'] }
+            },
+            _sum: { balanceDue: true }
+        });
+
+        // Sum Paid Rent Invoices only for Revenue tracking
         const rentAgg = await prisma.invoice.aggregate({
             where: {
                 unit: { propertyId: { in: propertyIds } },
-                status: { notIn: ['draft', 'cancelled'] },
+                status: 'paid',
                 category: 'RENT'
             },
-            _sum: { paidAmount: true, balanceDue: true }
+            _sum: { paidAmount: true }
         });
 
         // Sum Security Deposits (Category SERVICE) - treated as liability
         const depositAgg = await prisma.invoice.aggregate({
             where: {
                 unit: { propertyId: { in: propertyIds } },
-                status: { notIn: ['draft', 'cancelled'] },
+                status: 'paid',
                 category: 'SERVICE'
             },
             _sum: { paidAmount: true }
         });
 
         const monthlyRevenue = Number(rentAgg._sum.paidAmount || 0);
-        const outstandingDues = Number(rentAgg._sum.balanceDue || 0);
+        const outstandingDues = Number(duesAgg._sum.balanceDue || 0);
         const totalDepositsHeld = Number(depositAgg._sum.paidAmount || 0);
 
         const thirtyDaysFromNow = new Date();
@@ -327,7 +336,7 @@ exports.getOwnerFinancials = async (req, res) => {
         }, 0);
 
         const outstandingDues = invoices.reduce((sum, inv) => {
-            return inv.category === 'RENT' ? sum + parseFloat(inv.balanceDue || 0) : sum;
+            return sum + parseFloat(inv.balanceDue || 0);
         }, 0);
 
         const serviceFees = invoices.reduce((sum, inv) => sum + parseFloat(inv.serviceFees || 0), 0);

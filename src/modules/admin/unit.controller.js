@@ -9,10 +9,21 @@ exports.getAllUnits = async (req, res) => {
 
         const propertyId = (req.query.propertyId || req.query.building_id) ? parseInt(req.query.propertyId || req.query.building_id) : undefined;
         const rentalMode = req.query.rentalMode;
+        const unitType = req.query.unitType;
+        const search = req.query.search;
 
         const where = {};
         if (propertyId) where.propertyId = propertyId;
         if (rentalMode) where.rentalMode = rentalMode;
+        if (unitType) where.unitType = unitType;
+
+        if (search) {
+            where.OR = [
+                { unitNumber: { contains: search, mode: 'insensitive' } },
+                { property: { name: { contains: search, mode: 'insensitive' } } },
+                { property: { civicNumber: { contains: search, mode: 'insensitive' } } }
+            ];
+        }
 
         const [units, total] = await Promise.all([
             prisma.unit.findMany({

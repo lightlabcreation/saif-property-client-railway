@@ -52,15 +52,21 @@ const initLeaseCron = () => {
                         });
 
                         // 3. Reset tenant and residents
+                        // Clear assignments for all residents tied to this specific lease
                         await tx.user.updateMany({
                             where: { leaseId: lease.id, type: 'RESIDENT' },
-                            data: { leaseId: null }
+                            data: { leaseId: null, bedroomId: null, unitId: null, buildingId: null }
                         });
 
-                        // We safely update the tenant's assignments if they aren't on another active lease
+                        // For the primary tenant, only clear if they don't have OTHER active leases
                         const tenantOtherLeases = await tx.lease.findFirst({
-                            where: { tenantId: lease.tenantId, status: 'Active', NOT: { id: lease.id } }
+                            where: { 
+                                tenantId: lease.tenantId, 
+                                status: 'Active', 
+                                NOT: { id: lease.id } 
+                            }
                         });
+
                         if (!tenantOtherLeases) {
                             await tx.user.update({
                                 where: { id: lease.tenantId },
