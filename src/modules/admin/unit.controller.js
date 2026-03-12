@@ -251,11 +251,13 @@ exports.getUnitDetails = async (req, res) => {
 
         if (!unit) return res.status(404).json({ message: 'Unit not found' });
 
-        // Fetch occupants separately
+        // Fetch occupants assigned to this unit OR any of its bedrooms
         const occupants = await prisma.user.findMany({
             where: {
-                unitId: uId,
-                role: 'TENANT',
+                OR: [
+                    { unitId: uId },
+                    { bedroom: { unitId: uId } }
+                ],
                 type: 'RESIDENT'
             },
             select: {
@@ -265,7 +267,9 @@ exports.getUnitDetails = async (req, res) => {
                 lastName: true,
                 email: true,
                 phone: true,
-                bedroomId: true
+                bedroomId: true,
+                type: true,
+                parentId: true
             }
         });
 
