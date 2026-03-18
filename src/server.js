@@ -16,8 +16,20 @@ async function startServer() {
         initLeaseCron();
         initInsuranceCron();
         initMonthlyInvoiceCron();
-
         console.log('DEBUG: JWT_SECRET length:', process.env.JWT_SECRET ? process.env.JWT_SECRET.length : 'undefined');
+
+        // Sync Legacy Unit Types (Production Safety Wrapper)
+        const ratesCount = await prisma.unitTypeRate.count();
+        if (ratesCount === 0) {
+            console.log('🔄 First boot detected: Synchronizing legacy unit types into rates table...');
+            const oldTypes = await prisma.unitType.findMany();
+            for (const t of oldTypes) {
+                await prisma.unitTypeRate.create({
+                    data: { typeName: t.name, fullUnitRate: 0, singleBedroomRate: 0 }
+                }).catch(() => {}); // Safety catch
+            }
+            console.log(`✅ Synced ${oldTypes.length} backward items successfully.`);
+        }
 
         app.listen(PORT, () => {
             console.log(`🚀 Server running on port ${PORT}`);

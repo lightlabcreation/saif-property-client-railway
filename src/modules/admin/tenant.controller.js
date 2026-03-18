@@ -194,6 +194,7 @@ exports.getAllTenants = async (req, res) => {
                 phone: t.phone,
                 propertyId: activeLease?.unit?.propertyId || t.buildingId || null,
                 unitId: activeLease?.unitId || t.unitId || null,
+                leaseId: activeLease?.id || null,
                 bedroomId: activeLease?.bedroomId || t.bedroomId || null,
                 property: propName,
                 unit: uName,

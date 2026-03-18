@@ -15,19 +15,34 @@ exports.getTasks = async (req, res) => {
             orderBy: { dueDate: 'asc' }
         });
 
-        const formatted = tasks.map(t => ({
-            id: `MNT-${t.id + 100}`,
-            dbId: t.id,
-            name: t.name,
-            building: t.property ? t.property.name : 'General',
-            buildingId: t.propertyId,
-            type: t.type,
-            frequency: t.frequency,
-            dueDate: t.dueDate?.toISOString().split('T')[0] || 'N/A',
-            vendor: t.vendor,
-            status: t.status,
-            notes: t.notes
-        }));
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Clear time for safe comparison
+
+        const formatted = tasks.map(t => {
+            let resolvedStatus = t.status || 'Upcoming';
+            const taskDate = t.dueDate ? new Date(t.dueDate) : null;
+            if (taskDate) {
+                taskDate.setHours(0, 0, 0, 0);
+            }
+
+            if (resolvedStatus !== 'Completed' && taskDate && taskDate < today) {
+                resolvedStatus = 'Overdue';
+            }
+
+            return {
+                id: `MNT-${t.id + 100}`,
+                dbId: t.id,
+                name: t.name,
+                building: t.property ? t.property.name : 'General',
+                buildingId: t.propertyId,
+                type: t.type,
+                frequency: t.frequency,
+                dueDate: t.dueDate?.toISOString().split('T')[0] || 'N/A',
+                vendor: t.vendor,
+                status: resolvedStatus,
+                notes: t.notes
+            };
+        });
 
         res.json(formatted);
     } catch (e) {
@@ -41,20 +56,37 @@ exports.createTask = async (req, res) => {
     try {
         const { name, buildingId, type, frequency, dueDate, vendor, notes } = req.body;
 
-        const newTask = await prisma.maintenanceTask.create({
-            data: {
-                name,
-                propertyId: buildingId ? parseInt(buildingId) : null,
-                type,
-                frequency,
-                dueDate: new Date(dueDate),
-                vendor,
-                status: 'Upcoming',
-                notes
-            }
-        });
+        // Resolve Target Property IDs (supports "all" and comma-separated ids)
+        let targetPropertyIds = [];
+        if (buildingId === 'all') {
+            const allProps = await prisma.property.findMany({ select: { id: true } });
+            targetPropertyIds = allProps.map(p => p.id);
+        } else if (buildingId) {
+            targetPropertyIds = buildingId.toString().split(',').map(id => parseInt(id.trim())).filter(Boolean);
+        }
 
-        res.status(201).json(newTask);
+        if (targetPropertyIds.length === 0) {
+            targetPropertyIds = [null]; // Fallback if no building selected
+        }
+
+        const createdTasks = [];
+        for (const pid of targetPropertyIds) {
+            const newTask = await prisma.maintenanceTask.create({
+                data: {
+                    name,
+                    propertyId: pid,
+                    type,
+                    frequency,
+                    dueDate: new Date(dueDate),
+                    vendor,
+                    status: 'Upcoming',
+                    notes
+                }
+            });
+            createdTasks.push(newTask);
+        }
+
+        res.status(201).json(createdTasks.length === 1 ? createdTasks[0] : { success: true, count: createdTasks.length });
     } catch (e) {
         console.error(e);
         res.status(500).json({ message: 'Error creating task' });

@@ -54,6 +54,12 @@ router.delete('/invoices/:id', invoiceController.deleteInvoice);
 router.get('/invoices/:id/download', invoiceController.downloadInvoicePDF);
 router.post('/invoices/batch', invoiceController.runBatchInvoicing);
 
+const serviceItemController = require('./serviceItem.controller');
+router.get('/service-items', serviceItemController.getServiceItems);
+router.post('/service-items', serviceItemController.createServiceItem);
+router.put('/service-items/:id', serviceItemController.updateServiceItem);
+router.delete('/service-items/:id', serviceItemController.deleteServiceItem);
+
 const paymentController = require('./payment.controller');
 router.get('/payments', paymentController.getReceivedPayments);
 router.post('/payments', paymentController.recordPayment);
@@ -63,6 +69,7 @@ router.get('/payments/:id/download', paymentController.downloadReceiptPDF);
 const refundController = require('./refund.controller');
 router.get('/refunds', refundController.getRefunds);
 router.post('/refunds', refundController.createRefund);
+router.get('/refunds/calculate/:tenantId', refundController.calculateRefund);
 router.put('/refunds/:id', refundController.updateRefund);
 router.delete('/refunds/:id', refundController.deleteRefund);
 
@@ -97,6 +104,7 @@ router.post('/communication/bulk-delete', communicationController.bulkDeleteLogs
 router.get('/analytics/revenue', analyticsController.getRevenueStats);
 router.get('/analytics/vacancy', analyticsController.getVacancyStats);
 router.get('/reports/rent-roll', reportsController.getRentRoll);
+router.put('/reports/potential-rent', reportsController.updatePotentialRent);
 router.get('/reports', reportsController.getReports);
 router.get('/reports/:id/download', reportsController.downloadReportPDF);
 
@@ -122,5 +130,11 @@ router.delete('/documents/:id', documentController.deleteDocument);
 router.get('/messages', messageController.getMessages);
 router.post('/messages', messageController.sendMessage);
 router.put('/messages/:id/read', messageController.markAsRead);
+
+const unitTypeController = require('./unitType.controller');
+router.get('/unit-types', unitTypeController.getUnitTypes);
+router.post('/unit-types', unitTypeController.createUnitType);
+router.put('/unit-types/:id', unitTypeController.updateUnitType);
+router.delete('/unit-types/:id', unitTypeController.deleteUnitType);
 
 module.exports = router;

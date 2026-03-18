@@ -144,8 +144,8 @@ exports.createUnit = async (req, res) => {
 
         // Validate unit type if provided (Check against DB)
         if (unitType) {
-            const validType = await prisma.unitType.findUnique({
-                where: { name: unitType }
+            const validType = await prisma.unitTypeRate.findFirst({
+                where: { typeName: unitType }
             });
             if (!validType) {
                 return res.status(400).json({
@@ -256,7 +256,7 @@ exports.getUnitDetails = async (req, res) => {
             where: {
                 OR: [
                     { unitId: uId },
-                    { bedroom: { unitId: uId } }
+                    { bedroomId: { in: unit.bedroomsList.map(b => b.id) } }
                 ],
                 type: 'RESIDENT'
             },
@@ -368,8 +368,8 @@ exports.updateUnit = async (req, res) => {
 
         // Validate unit type if provided (Check against DB)
         if (unitType) {
-            const validType = await prisma.unitType.findUnique({
-                where: { name: unitType }
+            const validType = await prisma.unitTypeRate.findFirst({
+                where: { typeName: unitType }
             });
             if (!validType) {
                 return res.status(400).json({
@@ -621,16 +621,15 @@ exports.deleteUnit = async (req, res) => {
 };
 
 // GET /api/admin/unit-types
-// GET /api/admin/unit-types
 exports.getUnitTypes = async (req, res) => {
     try {
-        // Fetch from DB
-        const unitTypes = await prisma.unitType.findMany({
-            orderBy: { name: 'asc' }
+        // Fetch from DB rates table safely
+        const unitTypes = await prisma.unitTypeRate.findMany({
+            orderBy: { typeName: 'asc' }
         });
 
         res.json({
-            unitTypes: unitTypes.map(t => ({ id: t.id, name: t.name, isActive: t.isActive }))
+            unitTypes: unitTypes.map(t => ({ id: t.id, name: t.typeName, isActive: true }))
         });
     } catch (error) {
         console.error(error);
@@ -645,16 +644,16 @@ exports.createUnitType = async (req, res) => {
 
         if (!name) return res.status(400).json({ message: 'Name is required' });
 
-        const existing = await prisma.unitType.findUnique({
-            where: { name }
+        const existing = await prisma.unitTypeRate.findFirst({
+            where: { typeName: name }
         });
 
         if (existing) {
             return res.status(400).json({ message: 'Unit Type already exists' });
         }
 
-        const newType = await prisma.unitType.create({
-            data: { name, isActive: true }
+        const newType = await prisma.unitTypeRate.create({
+            data: { typeName: name, fullUnitRate: 0, singleBedroomRate: 0 }
         });
 
         res.status(201).json(newType);
@@ -669,7 +668,7 @@ exports.deleteUnitType = async (req, res) => {
     try {
         const { id } = req.params;
 
-        await prisma.unitType.delete({
+        await prisma.unitTypeRate.delete({
             where: { id: parseInt(id) }
         });
 

@@ -59,7 +59,7 @@ exports.getLeaseDetails = async (req, res) => {
             startDate: lease.startDate,
             endDate: lease.endDate,
             status: lease.status,
-            deposit: lease.monthlyRent ? parseFloat(lease.monthlyRent) : 0, // Mock assumption
+            deposit: lease.securityDeposit ? parseFloat(lease.securityDeposit) : 0,
             adminPhone: adminPhone
         });
 

@@ -33,7 +33,9 @@ exports.getInsurance = async (req, res) => {
             policyNumber: insurance.policyNumber,
             startDate: insurance.startDate.toISOString().substring(0, 10),
             endDate: insurance.endDate.toISOString().substring(0, 10),
-            documentUrl: insurance.documentUrl,
+            documentUrl: (insurance.documentUrl && insurance.uploadedDocumentId)
+                ? `/api/tenant/documents/${insurance.uploadedDocumentId}/download?disposition=inline`
+                : insurance.documentUrl,
             uploadedDocumentId: insurance.uploadedDocumentId,
             documentType: insurance.document?.type || 'Other',
             status: insurance.status,
@@ -75,7 +77,10 @@ exports.uploadInsurance = async (req, res) => {
 
         if (req.files && req.files.file) {
             const file = req.files.file;
-            const result = await uploadToCloudinary(file.tempFilePath, 'tenant_insurance');
+            const isPdf = file.name.toLowerCase().endsWith('.pdf');
+            const result = await uploadToCloudinary(file.tempFilePath, 'tenant_insurance', {
+                resource_type: isPdf ? 'raw' : 'auto'
+            });
             documentUrl = result.secure_url;
 
             // Use centralized DocumentService for linking

@@ -73,9 +73,7 @@ exports.getLeaseHistory = async (req, res) => {
             return {
                 id: l.id,
                 leaseType: l.leaseType === 'FULL_UNIT' ? 'Full Unit Lease' : 'Bedroom Lease',
-                buildingName: l.unit.property.civicNumber
-                    ? `${l.unit.property.name} - ${l.unit.property.civicNumber}`
-                    : l.unit.property.name,
+                buildingName: l.unit.property.name,
                 unit: l.unit.unitNumber || l.unit.name,
                 bedroom: l.bedroom ? l.bedroom.bedroomNumber : '-',
                 tenant: allTenants, // Show all occupants

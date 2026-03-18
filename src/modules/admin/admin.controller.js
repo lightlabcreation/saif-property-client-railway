@@ -62,25 +62,44 @@ exports.getDashboardStats = async (req, res) => {
         });
         const projectedRevenue = parseFloat(leaseAgg._sum.monthlyRent) || 0;
 
-        const invoiceAgg = await prisma.invoice.aggregate({
-            where: {
-                unit: unitFilter
-            },
-            _sum: { paidAmount: true }
-        });
-        const actualRevenue = parseFloat(invoiceAgg._sum.paidAmount) || 0;
+        const [invoiceAgg, refundAgg] = await Promise.all([
+            prisma.invoice.aggregate({
+                where: { unit: unitFilter },
+                _sum: { paidAmount: true }
+            }),
+            prisma.refundAdjustment.aggregate({
+                where: { unit: unitFilter, status: 'Completed' },
+                _sum: { amount: true }
+            })
+        ]);
+        
+        const grossRevenue = parseFloat(invoiceAgg._sum.paidAmount) || 0;
+        const totalRefunds = parseFloat(refundAgg._sum.amount) || 0;
+        const actualRevenueValue = grossRevenue - totalRefunds;
         // Calculate Outstanding Dues (Total Balance Due on unpaid invoices)
         const unpaidInvoices = await prisma.invoice.findMany({
             where: {
                 status: { notIn: ['paid', 'draft'] },
                 unit: unitFilter
             },
-            select: { balanceDue: true }
+            select: { balanceDue: true, category: true, description: true }
         });
-        const outstandingDues = unpaidInvoices.reduce((sum, i) => sum + parseFloat(i.balanceDue), 0);
+        
+        let outstandingRent = 0;
+        let outstandingDeposits = 0;
+
+        unpaidInvoices.forEach(i => {
+            const balance = parseFloat(i.balanceDue);
+            const isDeposit = i.category === 'SERVICE' && i.description === 'Security Deposit';
+            if (isDeposit) {
+                outstandingDeposits += balance;
+            } else {
+                outstandingRent += balance;
+            }
+        });
 
         // 5. Recent Activity — multi-source: leases, payments, tenants
-        const [recentLeases, recentPayments, recentTenants] = await Promise.all([
+        const [recentLeases, recentPayments, recentTenants, recentRefunds] = await Promise.all([
             prisma.lease.findMany({
                 where: { unit: unitFilter },
                 take: 5,
@@ -98,21 +117,31 @@ exports.getDashboardStats = async (req, res) => {
                 take: 5,
                 orderBy: { createdAt: 'desc' },
                 select: { name: true, createdAt: true }
+            }),
+            prisma.refundAdjustment.findMany({
+                where: { unit: unitFilter },
+                take: 5,
+                orderBy: { date: 'desc' },
+                include: { tenant: { select: { name: true } } }
             })
         ]);
 
         const activityItems = [
             ...recentLeases.map(l => ({
-                text: `Lease created for ${l.tenant?.name || 'Tenant'} — ${l.unit?.property?.name || ''} / ${l.unit?.name || ''}`,
+                text: `Lease created for ${l.tenant?.name || (l.tenant?.firstName ? `${l.tenant.firstName} ${l.tenant.lastName || ''}`.trim() : 'Tenant')} — ${l.unit?.property?.name || ''} / ${l.unit?.name || ''}`,
                 date: l.createdAt
             })),
             ...recentPayments.map(p => ({
-                text: `Payment of $${parseFloat(p.amount).toLocaleString('en-CA')} received from ${p.invoice?.tenant?.name || 'Tenant'} (${p.invoice?.unit?.name || ''})`,
+                text: `Payment of $${parseFloat(p.amount).toLocaleString('en-CA')} received from ${p.invoice?.tenant?.name || (p.invoice?.tenant?.firstName ? `${p.invoice.tenant.firstName} ${p.invoice.tenant.lastName || ''}`.trim() : 'Tenant')} (${p.invoice?.unit?.name || ''})`,
                 date: p.date
             })),
             ...recentTenants.map(t => ({
                 text: `New tenant added: ${t.name || 'Unknown'}`,
                 date: t.createdAt
+            })),
+            ...recentRefunds.map(r => ({
+                text: `${r.type} processed for ${r.tenant?.name || (r.tenant?.firstName ? `${r.tenant.firstName} ${r.tenant.lastName || ''}`.trim() : 'Tenant')} — $${parseFloat(r.amount).toLocaleString('en-CA')}`,
+                date: r.date
             }))
         ];
 
@@ -143,15 +172,42 @@ exports.getDashboardStats = async (req, res) => {
                 ...insuranceFilter
             }
         });
+ 
+        // 7. Vehicle Alerts
+        const allVehicles = await prisma.vehicle.findMany({
+            where: parsedOwnerId ? {
+                lease: { unit: { propertyId: { in: propertyIds } } }
+            } : {},
+            include: { 
+                lease: true,
+                tenant: { 
+                    include: { 
+                        leases: { where: { status: 'Active' } } 
+                    } 
+                } 
+            }
+        });
 
-        // 7. Lease Expiration Alerts (Custom Business Rules)
+        const totalVehiclesCount = allVehicles.length;
+        const unauthorizedVehiclesCount = allVehicles.filter(v => {
+            // Fallback to tenant active lease if vehicle leaseId is null
+            const lease = v.lease || v.tenant?.leases?.[0];
+            if (!lease) return true; // No lease linked at all
+            
+            const now = new Date();
+            const isInactive = lease.status !== 'Active';
+            const isExpired = lease.endDate && new Date(lease.endDate) < now;
+            return isInactive || isExpired;
+        }).length;
+
+        // 8. Lease Expiration Alerts (Custom Business Rules)
         const activeLeases = await prisma.lease.findMany({
             where: {
                 status: 'Active',
                 unit: unitFilter
             },
             include: {
-                tenant: { select: { name: true } },
+                tenant: { select: { name: true, firstName: true, lastName: true } },
                 unit: { select: { name: true, property: { select: { name: true } } } }
             }
         });
@@ -172,7 +228,7 @@ exports.getDashboardStats = async (req, res) => {
                 expiredLeasesCountTotal++;
                 alertList.push({
                     id: l.id,
-                    tenant: l.tenant?.name || 'Unknown',
+                    tenant: l.tenant?.name || (l.tenant?.firstName ? `${l.tenant.firstName} ${l.tenant.lastName || ''}`.trim() : 'Unknown'),
                     unit: `${l.unit?.property?.name} / ${l.unit?.name}`,
                     expiryDate: l.endDate,
                     daysLeft: diffDays,
@@ -185,7 +241,7 @@ exports.getDashboardStats = async (req, res) => {
                     expiringSoonLeasesCountTotal++;
                     alertList.push({
                         id: l.id,
-                        tenant: l.tenant?.name || 'Unknown',
+                        tenant: l.tenant?.name || (l.tenant?.firstName ? `${l.tenant.firstName} ${l.tenant.lastName || ''}`.trim() : 'Unknown'),
                         unit: `${l.unit?.property?.name} / ${l.unit?.name}`,
                         expiryDate: l.endDate,
                         daysLeft: diffDays,
@@ -196,6 +252,47 @@ exports.getDashboardStats = async (req, res) => {
             }
         });
 
+        // 9. Deposits Pending Refund (Expired Leases with Paid Deposit & No Finished Refund)
+        const pendingRefundsRaw = await prisma.invoice.findMany({
+            where: {
+                status: 'paid',
+                OR: [
+                    { category: 'SECURITY_DEPOSIT' },
+                    { description: { contains: 'Security Deposit' } }
+                ],
+                lease: {
+                    endDate: { lt: today }
+                },
+                unit: unitFilter
+            },
+            include: {
+                tenant: {
+                    include: {
+                        refundAdjustments: true
+                    }
+                },
+                unit: { include: { property: true } },
+                lease: true
+            }
+        });
+
+        const pendingRefundsList = pendingRefundsRaw.filter(inv => {
+            const adjustments = inv.tenant?.refundAdjustments || [];
+            const hasFinishedOrCancelled = adjustments.some(adj => 
+                ['Completed', 'Issued', 'Cancelled', 'Received'].includes(adj.status)
+            );
+            return !hasFinishedOrCancelled;
+        }).map(inv => ({
+            id: inv.id,
+            tenantName: inv.tenant?.name || (inv.tenant?.firstName ? `${inv.tenant.firstName} ${inv.tenant.lastName || ''}`.trim() : 'Unknown'),
+            building: inv.unit?.property?.name || 'N/A',
+            unitNumber: inv.unit?.name || 'N/A',
+            depositAmount: parseFloat(inv.paidAmount || 0),
+            leaseExpiryDate: inv.lease?.endDate,
+            tenantId: inv.tenantId,
+            unitId: inv.unitId
+        }));
+
         res.json({
             totalProperties,
             totalUnits,
@@ -204,8 +301,10 @@ exports.getDashboardStats = async (req, res) => {
                 vacant: vacantUnits,
             },
             projectedRevenue,
-            actualRevenue,
-            outstandingDues,
+            actualRevenue: actualRevenueValue,
+            outstandingDues: outstandingRent + outstandingDeposits,
+            outstandingRent,
+            outstandingDeposits,
             monthlyRevenue: projectedRevenue, // Backward compatibility
             insuranceAlerts: {
                 expired: expiredInsurance,
@@ -217,6 +316,11 @@ exports.getDashboardStats = async (req, res) => {
             },
             leaseAlertList: alertList,
             recentActivity,
+            vehicleStats: {
+                total: totalVehiclesCount,
+                unauthorized: unauthorizedVehiclesCount
+            },
+            pendingRefunds: pendingRefundsList
         });
     } catch (error) {
         console.error('Dashboard Stats Error:', error);

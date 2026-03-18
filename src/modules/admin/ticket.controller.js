@@ -107,7 +107,8 @@ exports.updateTicketStatus = async (req, res) => {
 // POST /api/admin/tickets (Admin creating ticket for tenant)
 exports.createTicket = async (req, res) => {
     try {
-        const { tenantId, subject, description, priority, propertyId, unitId } = req.body;
+        const { tenantId, subject, description, priority, category, unitId } = req.body;
+        let { propertyId } = req.body;
 
         const attachmentUrls = [];
 
@@ -127,22 +128,47 @@ exports.createTicket = async (req, res) => {
             attachmentUrls.push({ type: 'video', url: result.secure_url });
         }
 
-        // tenantId is user.id
-        const newTicket = await prisma.ticket.create({
-            data: {
-                userId: parseInt(tenantId),
-                subject,
-                description,
-                priority,
-                category: req.body.category,
-                status: 'Open',
-                propertyId: propertyId ? parseInt(propertyId) : null,
-                unitId: unitId ? parseInt(unitId) : null,
-                attachmentUrls: attachmentUrls.length > 0 ? JSON.stringify(attachmentUrls) : null
-            }
-        });
+        // 1. Resolve Target Property IDs
+        let targetPropertyIds = [];
+        if (propertyId === 'all') {
+            const allProps = await prisma.property.findMany({ select: { id: true } });
+            targetPropertyIds = allProps.map(p => p.id);
+        } else if (propertyId) {
+            // Handle comma-separated list of IDs for multi-select (e.g., "1,2,3")
+            targetPropertyIds = propertyId.toString().split(',').map(id => parseInt(id.trim())).filter(Boolean);
+        }
 
-        res.status(201).json(newTicket);
+        if (targetPropertyIds.length === 0) {
+            targetPropertyIds = [null]; // Fallback to generic
+        }
+
+        // 2. Resolve Fallback Assignment User
+        let assignId = parseInt(tenantId);
+        if (!assignId) {
+            const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
+            assignId = admin ? admin.id : 1; 
+        }
+
+        const createdTickets = [];
+        for (const pid of targetPropertyIds) {
+            const ticket = await prisma.ticket.create({
+                data: {
+                    userId: assignId,
+                    subject,
+                    description,
+                    priority,
+                    category: category || null,
+                    status: 'Open',
+                    propertyId: pid,
+                    unitId: pid ? (unitId ? parseInt(unitId) : null) : null, // Units only apply if 1 property selected usually
+                    attachmentUrls: attachmentUrls.length > 0 ? JSON.stringify(attachmentUrls) : null
+                }
+            });
+            createdTickets.push(ticket);
+        }
+
+        // Return first or summary
+        res.status(201).json(targetPropertyIds.length === 1 ? createdTickets[0] : { success: true, count: createdTickets.length });
     } catch (e) {
         console.error(e);
         res.status(500).json({ message: 'Error creating ticket' });

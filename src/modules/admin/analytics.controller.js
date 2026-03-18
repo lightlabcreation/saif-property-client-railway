@@ -33,13 +33,29 @@ exports.getRevenueStats = async (req, res) => {
         const projectedRevenue = parseFloat(leaseAgg._sum.monthlyRent) || 0;
 
         // Fetch all paid invoices for Actual Revenue and breakdowns
-        const invoices = await prisma.invoice.findMany({
-            where: {
-                paidAmount: { gt: 0 },
-                unit: unitFilter
-            },
-            include: { unit: { include: { property: true } } }
-        });
+        const [invoices, refunds] = await Promise.all([
+          prisma.invoice.findMany({
+              where: {
+                  paidAmount: { gt: 0 },
+                  unit: unitFilter
+              },
+              include: { unit: { include: { property: true } } }
+          }),
+          prisma.refundAdjustment.findMany({
+              where: {
+                  status: 'Completed',
+                  unit: unitFilter
+              },
+              include: { unit: { include: { property: true } } }
+          })
+        ]);
+
+        // Helper to standardize month keys (e.g., "March 2026")
+        const getMonthKey = (dateInput) => {
+            const d = new Date(dateInput);
+            if (isNaN(d.getTime())) return dateInput; // Fallback to raw string
+            return d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+        };
 
         let actualRevenue = 0;
         let actualRent = 0;
@@ -52,9 +68,10 @@ exports.getRevenueStats = async (req, res) => {
             const amount = parseFloat(inv.paidAmount) || 0;
             actualRevenue += amount;
 
+            const desc = (inv.description || '').toLowerCase();
             let type = 'Rent';
             if (inv.category === 'SERVICE') {
-                if (inv.description && (inv.description.includes('Secondary Deposit') || inv.description.includes('Security Deposit'))) {
+                if (desc.includes('deposit')) {
                     type = 'Deposit';
                     actualDeposit += amount;
                 } else {
@@ -73,8 +90,8 @@ exports.getRevenueStats = async (req, res) => {
             else if (type === 'Deposit') propertyMap[propName].deposit += amount;
             else if (type === 'ServiceFees') propertyMap[propName].serviceFees += amount;
 
-            // Monthly breakdown per property (for Issue 10)
-            const mon = inv.month;
+            // Monthly breakdown per property
+            const mon = getMonthKey(inv.month);
             if (!propertyMap[propName].monthly[mon]) propertyMap[propName].monthly[mon] = { amount: 0, rent: 0, deposit: 0, serviceFees: 0 };
             propertyMap[propName].monthly[mon].amount += amount;
             if (type === 'Rent') propertyMap[propName].monthly[mon].rent += amount;
@@ -89,18 +106,71 @@ exports.getRevenueStats = async (req, res) => {
             else if (type === 'ServiceFees') monthlyMap[mon].serviceFees += amount;
         });
 
-        // Sort monthly data chronologically (Issue 4 fix)
+        // Subtract refunds from totals and breakdowns
+        refunds.forEach(ref => {
+          const amount = parseFloat(ref.amount) || 0;
+          actualRevenue -= amount;
+          
+          let type = 'Rent';
+          const rType = ref.type.toLowerCase();
+          if (rType.includes('deposit')) {
+            type = 'Deposit';
+            actualDeposit -= amount;
+          } else if (rType.includes('adjustment')) {
+            type = 'ServiceFees';
+            actualServiceFees -= amount;
+          } else {
+            type = 'Rent';
+            actualRent -= amount;
+          }
+
+          const propName = ref.unit?.property?.name || 'Other Building';
+          if (propertyMap[propName]) {
+            propertyMap[propName].amount -= amount;
+            if (type === 'Rent') propertyMap[propName].rent -= amount;
+            else if (type === 'Deposit') propertyMap[propName].deposit -= amount;
+            else if (type === 'ServiceFees') propertyMap[propName].serviceFees -= amount;
+          }
+
+          const mon = getMonthKey(ref.date);
+          if (monthlyMap[mon]) {
+            monthlyMap[mon].amount -= amount;
+            if (type === 'Rent') monthlyMap[mon].rent -= amount;
+            else if (type === 'Deposit') monthlyMap[mon].deposit -= amount;
+            else if (type === 'ServiceFees') monthlyMap[mon].serviceFees -= amount;
+          }
+
+          if (propertyMap[propName] && propertyMap[propName].monthly[mon]) {
+            propertyMap[propName].monthly[mon].amount -= amount;
+            if (type === 'Rent') propertyMap[propName].monthly[mon].rent -= amount;
+            else if (type === 'Deposit') propertyMap[propName].monthly[mon].deposit -= amount;
+            else if (type === 'ServiceFees') propertyMap[propName].monthly[mon].serviceFees -= amount;
+          }
+        });
+
+        const monthSorter = (a, b) => {
+            const parseDate = (s) => {
+                const [mName, y] = s.split(' ');
+                const fullMonthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+                const mIdx = fullMonthNames.indexOf(mName);
+                if (mIdx === -1) return 0;
+                return new Date(parseInt(y), mIdx).getTime();
+            };
+            return parseDate(a) - parseDate(b);
+        };
+
+        // Sort monthly data chronologically
         const monthlyRevenue = Object.keys(monthlyMap)
-            .sort((a, b) => a.localeCompare(b))
+            .sort(monthSorter)
             .map(m => ({
-                month: m,
+                month: m.split(' ')[0].substring(0, 3) + " '" + m.split(' ')[1].slice(-2), // Custom display format "Mar '26"
                 amount: monthlyMap[m].amount,
                 rent: monthlyMap[m].rent,
                 deposit: monthlyMap[m].deposit,
                 serviceFees: monthlyMap[m].serviceFees
             }));
 
-        // Build revenueByProperty with monthly breakdown (Issue 10)
+        // Build revenueByProperty with monthly breakdown
         const revenueByProperty = Object.keys(propertyMap).map(p => ({
             name: p,
             amount: propertyMap[p].amount,
@@ -108,9 +178,9 @@ exports.getRevenueStats = async (req, res) => {
             deposit: propertyMap[p].deposit,
             serviceFees: propertyMap[p].serviceFees,
             monthly: Object.keys(propertyMap[p].monthly)
-                .sort((a, b) => a.localeCompare(b))
+                .sort(monthSorter)
                 .map(m => ({
-                    month: m,
+                    month: m.split(' ')[0].substring(0, 3) + " '" + m.split(' ')[1].slice(-2),
                     ...propertyMap[p].monthly[m]
                 }))
         }));

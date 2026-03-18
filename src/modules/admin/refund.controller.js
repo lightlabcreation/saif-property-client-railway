@@ -17,13 +17,18 @@ exports.getRefunds = async (req, res) => {
             id: r.requestId,
             type: r.type,
             reason: r.reason,
-            tenant: r.tenant.name,
+            tenant: r.tenant?.name || (r.tenant?.firstName ? `${r.tenant.firstName} ${r.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
             unit: r.unit.name,
             amount: parseFloat(r.amount),
             date: r.date.toLocaleDateString('en-GB', {
                 day: '2-digit', month: 'short', year: 'numeric'
             }),
-            status: r.status
+            status: r.status,
+            issuedDate: r.issuedDate ? r.issuedDate.toISOString().split('T')[0] : null,
+            method: r.method,
+            referenceNumber: r.referenceNumber,
+            proofUrl: r.proofUrl,
+            outcomeReason: r.outcomeReason || 'Pending review'
         }));
 
         res.json(formatted);
@@ -36,7 +41,7 @@ exports.getRefunds = async (req, res) => {
 // POST /api/admin/refunds
 exports.createRefund = async (req, res) => {
     try {
-        const { type, reason, tenantId, unitId, amount, status, date } = req.body;
+        const { type, reason, tenantId, unitId, amount, status, date, issuedDate, method, referenceNumber, proofUrl, outcomeReason } = req.body;
 
         const result = await prisma.$transaction(async (tx) => {
             const count = await tx.refundAdjustment.count();
@@ -52,8 +57,13 @@ exports.createRefund = async (req, res) => {
                     tenantId: parseInt(tenantId),
                     unitId: parseInt(unitId),
                     amount: refundamt,
-                    status: status || 'Completed',
-                    date: date ? new Date(date) : new Date()
+                    status: status || 'Pending',
+                    date: date ? new Date(date) : new Date(),
+                    issuedDate: issuedDate ? new Date(issuedDate) : null,
+                    method: method || null,
+                    referenceNumber: referenceNumber || null,
+                    proofUrl: proofUrl || null,
+                    outcomeReason: outcomeReason || 'Pending review'
                 }
             });
 
@@ -96,7 +106,7 @@ exports.createRefund = async (req, res) => {
 // PUT /api/admin/refunds/:id
 exports.updateRefund = async (req, res) => {
     try {
-        const { status, reason, amount } = req.body;
+        const { status, reason, amount, issuedDate, method, referenceNumber, proofUrl, outcomeReason } = req.body;
         const { id } = req.params;
 
         const updated = await prisma.refundAdjustment.update({
@@ -104,7 +114,12 @@ exports.updateRefund = async (req, res) => {
             data: {
                 status,
                 reason,
-                amount: amount ? parseFloat(amount) : undefined
+                amount: amount ? parseFloat(amount) : undefined,
+                issuedDate: issuedDate ? new Date(issuedDate) : undefined,
+                method: method !== undefined ? method : undefined,
+                referenceNumber: referenceNumber !== undefined ? referenceNumber : undefined,
+                proofUrl: proofUrl !== undefined ? proofUrl : undefined,
+                outcomeReason: outcomeReason !== undefined ? outcomeReason : undefined
             }
         });
 
@@ -126,5 +141,51 @@ exports.deleteRefund = async (req, res) => {
     } catch (e) {
         console.error(e);
         res.status(500).json({ message: 'Error deleting refund' });
+    }
+};
+
+// GET /api/admin/refunds/calculate/:tenantId
+exports.calculateRefund = async (req, res) => {
+    try {
+        const tenantId = parseInt(req.params.tenantId);
+
+        // 1. Get Paid Security Deposits
+        const depositInvoices = await prisma.invoice.findMany({
+            where: {
+                tenantId,
+                status: 'paid',
+                OR: [
+                    { category: 'SECURITY_DEPOSIT' },
+                    { description: { contains: 'Security Deposit' } }
+                ]
+            }
+        });
+
+        const totalDepositPaid = depositInvoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount || 0), 0);
+
+        // 2. Get Service Fee Invoices (Deductions)
+        const serviceInvoices = await prisma.invoice.findMany({
+            where: {
+                tenantId,
+                category: 'SERVICE'
+            }
+        });
+
+        const totalServiceCharges = serviceInvoices.reduce((sum, inv) => sum + parseFloat(inv.amount || 0), 0);
+
+        // 3. Final Calculation Ratio
+        const finalRefundAmount = Math.max(0, totalDepositPaid - totalServiceCharges);
+
+        res.json({
+            tenantId,
+            totalDepositPaid,
+            totalServiceCharges,
+            finalRefundAmount,
+            appliedServiceInvoices: serviceInvoices.map(inv => ({ invoiceNo: inv.invoiceNo, amount: parseFloat(inv.amount) }))
+        });
+
+    } catch (e) {
+        console.error('Calculate Refund Error:', e);
+        res.status(500).json({ message: 'Error calculating refund: ' + (e.message || 'Server error') });
     }
 };

@@ -10,10 +10,13 @@ exports.getDashboard = async (req, res) => {
             where: { id: userId },
             include: {
                 leases: {
-                    where: { status: 'Active' },
+                    where: { status: { in: ['Active', 'ACTIVE'] } },
                     include: { unit: true }
                 },
-                insurances: true
+                insurances: true,
+                vehicles: {
+                    include: { lease: true }
+                }
             }
         });
 
@@ -60,9 +63,9 @@ exports.getDashboard = async (req, res) => {
             const latestInvoice = await prisma.invoice.findFirst({
                 where: {
                     tenantId: userId,
-                    status: { not: 'paid' }
+                    status: { notIn: ['Paid', 'PAID', 'paid'] }
                 },
-                orderBy: { dueDate: 'asc' } // Earliest due date first
+                orderBy: { dueDate: 'asc' }
             });
 
             if (latestInvoice) {
@@ -85,6 +88,12 @@ exports.getDashboard = async (req, res) => {
             leaseStatus: activeLease ? 'Active' : 'No Active Lease',
             leaseExpiry: activeLease ? activeLease.endDate : null,
             insuranceStatus: tenant.insurances.length > 0 ? 'Compliant' : 'Missing',
+            vehicleCount: tenant.vehicles.length,
+            unauthorizedVehicles: tenant.vehicles.filter(v => {
+                if (!v.lease) return true;
+                const now = new Date();
+                return v.lease.status !== 'Active' || (v.lease.endDate && new Date(v.lease.endDate) < now);
+            }).length,
             openTickets: openTickets, // Return numeric only
             unreadCount,
             recentTickets: recentTickets.map(t => ({
@@ -201,21 +210,22 @@ exports.getProfile = async (req, res) => {
             where: { id: userId },
             include: {
                 leases: {
-                    where: { status: 'Active' },
+                    where: { status: { in: ['Active', 'ACTIVE'] } },
                     include: {
                         unit: {
                             include: { property: true }
                         }
-                    }
+                    },
+                    orderBy: { startDate: 'desc' }
                 }
             }
         });
 
         if (!tenant) return res.status(404).json({ message: 'Tenant not found' });
 
-        const activeLease = tenant.leases[0];
+        const activeLease = tenant.leases[0] || (await prisma.lease.findFirst({ where: { tenantId: userId }, include: { unit: { include: { property: true } } }, orderBy: { startDate: 'desc' } }));
         const buildingName = activeLease?.unit?.property?.name || 'No Building';
-        const unitNumber = activeLease?.unit?.unitNumber || '';
+        const unitNumber = activeLease?.unit?.unitNumber || activeLease?.unit?.name || '';
 
         const name = tenant.name ||
             (tenant.firstName && tenant.lastName ? `${tenant.firstName} ${tenant.lastName}` : 'Tenant');
@@ -225,6 +235,29 @@ exports.getProfile = async (req, res) => {
             buildingName,
             unitNumber
         });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// GET /api/tenant/vehicles
+exports.getVehicles = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const vehicles = await prisma.vehicle.findMany({
+            where: { tenantId: userId },
+            include: { lease: true }
+        });
+
+        const now = new Date();
+        const formatted = vehicles.map(v => ({
+            ...v,
+            isAuthorized: v.lease && v.lease.status === 'Active' && 
+                          (!v.lease.endDate || new Date(v.lease.endDate) > now)
+        }));
+
+        res.json(formatted);
     } catch (e) {
         console.error(e);
         res.status(500).json({ message: 'Server error' });

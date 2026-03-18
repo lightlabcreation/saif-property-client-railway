@@ -16,7 +16,20 @@ const app = express();
 
 // Middleware
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:", "https://res.cloudinary.com"],
+      connectSrc: ["'self'", "https://api.cloudinary.com", "http://localhost:5000", "http://localhost:5173", "https://*.up.railway.app"],
+      fontSrc: ["'self'", "https:", "data:"],
+      objectSrc: ["'self'", "blob:", "https://res.cloudinary.com"],
+      frameSrc: ["'self'", "blob:", "https://res.cloudinary.com"],
+      upgradeInsecureRequests: null,
+    },
+  },
 }));
 
 const allowedOrigins = require('./config/allowedOrigins');

@@ -134,13 +134,6 @@ exports.downloadDocument = async (req, res) => {
         }
 
         // Use axios to stream from Cloudinary
-        const response = await axios({
-            method: 'GET',
-            url: document.fileUrl,
-            responseType: 'stream',
-            headers: {} // Ensure no app headers are leaked
-        });
-
         const disposition = req.query.disposition || 'attachment';
 
         // Set headers for download
@@ -152,6 +145,13 @@ exports.downloadDocument = async (req, res) => {
             ? filename
             : `${filename}.${extension}`;
 
+        const response = await axios({
+            method: 'GET',
+            url: document.fileUrl,
+            responseType: 'stream',
+            headers: {} // Ensure no app headers are leaked
+        });
+
         if (disposition === 'inline') {
             res.setHeader('Content-Disposition', 'inline');
         } else {
@@ -160,24 +160,57 @@ exports.downloadDocument = async (req, res) => {
 
         // Determine content type more robustly
         let contentType = response.headers['content-type'];
-        const extName = (document.name || filename || '').toLowerCase();
-        const urlLower = document.fileUrl.toLowerCase();
+        const urlLower = document.fileUrl ? document.fileUrl.toLowerCase() : '';
+        const nameLower = (document.name || '').toLowerCase();
 
-        if (!contentType || contentType === 'application/octet-stream' || contentType.includes('image/')) {
-            if (urlLower.endsWith('.pdf') || extName.endsWith('.pdf')) {
+        if (!contentType || contentType === 'application/octet-stream' || contentType.includes('image/') || contentType.includes('text/')) {
+            if (urlLower.endsWith('.pdf') || nameLower.endsWith('.pdf')) {
                 contentType = 'application/pdf';
-            } else if (urlLower.endsWith('.jpg') || urlLower.endsWith('.jpeg') || extName.endsWith('.jpg') || extName.endsWith('.jpeg')) {
+            } else if (urlLower.endsWith('.jpg') || urlLower.endsWith('.jpeg') || nameLower.endsWith('.jpg') || nameLower.endsWith('.jpeg')) {
                 contentType = 'image/jpeg';
-            } else if (urlLower.endsWith('.png') || extName.endsWith('.png')) {
+            } else if (urlLower.endsWith('.png') || nameLower.endsWith('.png')) {
                 contentType = 'image/png';
             }
         }
         res.setHeader('Content-Type', contentType || 'application/pdf');
 
         response.data.pipe(res);
-    } catch (e) {
-        console.error('Download Error:', e);
-        res.status(500).json({ message: 'Error downloading document' });
+    } catch (proxyErr) {
+        if (proxyErr.response && proxyErr.response.status === 401 && (document?.fileUrl?.toLowerCase().endsWith('.pdf') || document?.type === 'Insurance')) {
+            console.log('Tenant PDF blocked by Cloudinary. Creating image-based PDF fallback...');
+            try {
+                const PDFDocument = require('pdfkit');
+                let fallbackUrl = document.fileUrl;
+                
+                // Handle raw Cloudinary URLs that don't end in .pdf
+                if (fallbackUrl.includes('/raw/upload/')) {
+                    fallbackUrl = fallbackUrl.replace('/raw/upload/', '/image/upload/') + '.jpg';
+                } else {
+                    fallbackUrl = fallbackUrl.replace(/\.pdf$/i, '.jpg');
+                }
+
+                const imgResponse = await axios({
+                    method: 'GET',
+                    url: fallbackUrl,
+                    responseType: 'arraybuffer',
+                    headers: {}
+                });
+
+                res.setHeader('Content-Type', 'application/pdf');
+                res.setHeader('Content-Disposition', disposition === 'inline' ? 'inline' : `attachment; filename="${finalFilename.toLowerCase().endsWith('.pdf') ? finalFilename : finalFilename + '.pdf'}"`);
+
+                const pdfDoc = new PDFDocument({ autoFirstPage: false });
+                pdfDoc.pipe(res);
+                pdfDoc.addPage({ margin: 0 });
+                pdfDoc.image(imgResponse.data, 0, 0, { fit: [pdfDoc.page.width, pdfDoc.page.height], align: 'center', valign: 'center' });
+                pdfDoc.end();
+                return;
+            } catch (fbErr) {
+                console.error('Tenant PDF Fallback failed:', fbErr.message);
+            }
+        }
+        console.error('Download Error:', proxyErr);
+        res.status(500).json({ message: 'Error streaming file' });
     }
 };
 

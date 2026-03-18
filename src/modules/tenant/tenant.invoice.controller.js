@@ -15,7 +15,10 @@ exports.getInvoices = async (req, res) => {
                 }
             },
             orderBy: { createdAt: 'desc' },
-            include: { unit: true }
+            include: { 
+                unit: { include: { property: true } },
+                tenant: true
+            }
         });
 
         const formatted = invoices.map(inv => {
@@ -39,7 +42,9 @@ exports.getInvoices = async (req, res) => {
                 serviceFees: parseFloat(inv.serviceFees),
                 status: statusDisplay,
                 date: inv.createdAt.toISOString().split('T')[0],
-                unit: inv.unit ? inv.unit.name : 'N/A'
+                unit: inv.unit ? (inv.unit.unitNumber || inv.unit.name) : 'N/A',
+                building: inv.unit?.property?.name || 'N/A',
+                tenantName: inv.tenant?.name || inv.tenant?.firstName + ' ' + inv.tenant?.lastName
             };
         });
 

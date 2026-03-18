@@ -19,11 +19,15 @@ cloudinary.config({
  */
 const uploadToCloudinary = async (filePath, folder = 'property_management', options = {}) => {
     try {
-        const result = await cloudinary.uploader.upload(filePath, {
+        const fileOptions = {
             folder: folder,
             resource_type: options.resource_type || 'auto',
+            use_filename: true,
+            unique_filename: true,
             ...options
-        });
+        };
+
+        const result = await cloudinary.uploader.upload(filePath, fileOptions);
 
         // Delete temporary file
         if (fs.existsSync(filePath)) {

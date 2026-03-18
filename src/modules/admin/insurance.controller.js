@@ -182,7 +182,10 @@ exports.getInsuranceAlerts = async (req, res) => {
                 policyNumber: ins.policyNumber,
                 startDate: ins.startDate.toISOString().substring(0, 10),
                 endDate: ins.endDate.toISOString().substring(0, 10),
-                documentUrl: ins.documentUrl,
+                documentUrl: (ins.documentUrl && ins.uploadedDocumentId)
+                    ? `/api/admin/documents/${ins.uploadedDocumentId}/download?disposition=inline`
+                    : ins.documentUrl,
+                uploadedDocumentId: ins.uploadedDocumentId,
                 status: ins.status,
                 rejectionReason: ins.rejectionReason,
                 expiry: expiry

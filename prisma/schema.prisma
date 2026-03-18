@@ -51,6 +51,7 @@ model User {
   residents         User[]             @relation("TenantResidents")
   company           Company?           @relation("CompanyUsers", fields: [companyId], references: [id])
   quickBooksConfig  QuickBooksConfig?
+  vehicles          Vehicle[]          @relation("TenantVehicles")
 
   @@index([leaseId], map: "user_leaseId_fkey")
   @@index([parentId], map: "user_parentId_fkey")
@@ -183,6 +184,7 @@ model Lease {
   unit            Unit        @relation(fields: [unitId], references: [id], map: "Lease_unitId_fkey")
   bedroom         Bedroom?    @relation(fields: [bedroomId], references: [id])
   residents       User[]      @relation("LeaseResidents")
+  vehicles        Vehicle[]   @relation("LeaseVehicles")
 
   @@index([tenantId], map: "Lease_tenantId_fkey")
   @@index([unitId], map: "Lease_unitId_fkey")
@@ -316,6 +318,7 @@ model Invoice {
   category      InvoiceCategory @default(RENT)
   description   String?         @db.Text
   documents     Document[]
+  items         InvoiceLineItem[]
   tenant        User            @relation(fields: [tenantId], references: [id], map: "Invoice_tenantId_fkey")
   unit          Unit            @relation(fields: [unitId], references: [id], map: "Invoice_unitId_fkey")
   lease         Lease?          @relation(fields: [leaseId], references: [id])
@@ -326,6 +329,19 @@ model Invoice {
   @@index([unitId], map: "Invoice_unitId_fkey")
   @@index([leaseId], map: "invoice_leaseId_fkey")
   @@map("invoice")
+}
+
+model InvoiceLineItem {
+  id          Int      @id @default(autoincrement())
+  invoiceId   Int
+  description String   @db.Text
+  amount      Decimal
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId], map: "invoicelineitem_invoiceId_fkey")
+  @@map("invoicelineitem")
 }
 
 model Payment {
@@ -458,10 +474,15 @@ model RefundAdjustment {
   unitId    Int
   amount    Decimal
   date      DateTime
-  status    String   @default("Pending")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  tenant    User     @relation(fields: [tenantId], references: [id], map: "RefundAdjustment_tenantId_fkey")
+  status          String    @default("Pending")
+  issuedDate      DateTime?
+  method          String?
+  referenceNumber String?
+  proofUrl        String?
+  outcomeReason   String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  tenant          User      @relation(fields: [tenantId], references: [id], map: "RefundAdjustment_tenantId_fkey")
   unit      Unit     @relation(fields: [unitId], references: [id], map: "RefundAdjustment_unitId_fkey")
 
   @@index([tenantId], map: "RefundAdjustment_tenantId_fkey")
@@ -537,6 +558,7 @@ enum InsuranceStatus {
 enum InvoiceCategory {
   RENT
   SERVICE
+  SECURITY_DEPOSIT
 }
 
 enum TenantType {
@@ -564,4 +586,47 @@ enum RentalMode {
 enum TaxStatus {
   active
   inactive
+}
+
+model Vehicle {
+  id              Int      @id @default(autoincrement())
+  tenantId        Int
+  leaseId         Int?     // Linked to the lease for authorization check
+  make            String
+  model           String
+  color           String
+  licensePlate    String   @unique
+  parkingSpace    String?
+  photo1Url       String?
+  photo2Url       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          User     @relation("TenantVehicles", fields: [tenantId], references: [id])
+  lease           Lease?   @relation("LeaseVehicles", fields: [leaseId], references: [id])
+
+  @@index([tenantId], map: "vehicle_tenantId_fkey")
+  @@index([leaseId], map: "vehicle_leaseId_fkey")
+  @@map("vehicle")
+}
+
+model ServiceFeeItem {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  amount    Decimal  @default(0.00) @db.Decimal(10, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("servicefeeitems")
+}
+
+model UnitTypeRate {
+  id                Int      @id @default(autoincrement())
+  typeName          String   @unique
+  fullUnitRate      Decimal  @default(0.00) @db.Decimal(10, 2)
+  singleBedroomRate Decimal  @default(0.00) @db.Decimal(10, 2)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("unittyperates")
 }

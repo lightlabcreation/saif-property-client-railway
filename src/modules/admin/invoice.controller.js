@@ -56,6 +56,7 @@ exports.getInvoices = async (req, res) => {
     try {
         const invoices = await prisma.invoice.findMany({
             include: {
+                items: true,
                 tenant: {
                     include: { leases: true }
                 },
@@ -98,7 +99,7 @@ exports.getInvoices = async (req, res) => {
                 invoiceNo: inv.invoiceNo,
                 tenantId: inv.tenantId,
                 unitId: inv.unitId,
-                tenant: inv.tenant.name,
+                tenant: inv.tenant?.name || (inv.tenant?.firstName ? `${inv.tenant.firstName} ${inv.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
                 unit: inv.unit.name,
                 month: inv.month,
                 rent: currentRent,
@@ -110,6 +111,7 @@ exports.getInvoices = async (req, res) => {
 
                 category: displayCategory,
                 description: inv.description,
+                items: inv.items || [],
                 leaseStartDate: activeLease?.startDate || null,
                 leaseEndDate: activeLease?.endDate || null
             };
@@ -125,7 +127,7 @@ exports.getInvoices = async (req, res) => {
 // POST /api/admin/invoices (Create draft)
 exports.createInvoice = async (req, res) => {
     try {
-        let { tenantId, unitId, month, rent, serviceFees } = req.body;
+        let { tenantId, unitId, month, rent, serviceFees, items } = req.body;
 
         if (!tenantId || !unitId) {
             return res.status(400).json({ message: 'Tenant ID and Unit ID are required' });
@@ -157,9 +159,12 @@ exports.createInvoice = async (req, res) => {
         // Note: RESIDENT is not a tenant type - only INDIVIDUAL and COMPANY are valid tenant types
         // Residents are separate entities linked to tenant leases, not direct lease holders
 
-        // ENFORCE PHASE 1 & 3: Separation and Lease Source of Truth
         const rentAmt = parseFloat(rent) || 0;
-        const feesAmt = parseFloat(serviceFees) || 0;
+        let feesAmt = parseFloat(serviceFees) || 0;
+
+        if (Array.isArray(items) && items.length > 0) {
+            feesAmt = items.reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
+        }
 
         if (rentAmt > 0 && feesAmt > 0) {
             return res.status(400).json({ message: 'Rent and Service Fees must be on separate invoices.' });
@@ -193,7 +198,13 @@ exports.createInvoice = async (req, res) => {
                 status: req.body.status || 'draft',
                 category: req.body.category || 'RENT',
                 description: req.body.description || null,
-                dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
+                dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+                items: Array.isArray(items) && items.length > 0 ? {
+                    create: items.map(item => ({
+                        description: item.description,
+                        amount: parseFloat(item.amount || 0)
+                    }))
+                } : undefined
             },
             include: {
                 tenant: true,

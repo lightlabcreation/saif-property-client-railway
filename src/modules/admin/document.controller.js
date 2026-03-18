@@ -54,6 +54,8 @@ exports.downloadDocument = async (req, res) => {
 
         const fileName = doc.name || `document-${id}.pdf`;
 
+        const disposition = req.query.disposition || 'inline';
+
         // Handle Cloudinary URLs (Absolute) - Proxy via Axios Stream
         if (doc.fileUrl.startsWith('http')) {
             try {
@@ -64,8 +66,6 @@ exports.downloadDocument = async (req, res) => {
                     responseType: 'stream',
                     headers: {} // Strip any ambient headers
                 });
-
-                const disposition = req.query.disposition || 'inline';
 
                 // Set correct headers for the browser
                 if (disposition === 'inline') {
@@ -80,8 +80,9 @@ exports.downloadDocument = async (req, res) => {
                 const ext = (doc.name || fileName || '').toLowerCase();
                 const urlLower = doc.fileUrl.toLowerCase();
 
-                if (!contentType || contentType === 'application/octet-stream' || contentType.includes('image/')) {
-                    if (urlLower.endsWith('.pdf') || ext.endsWith('.pdf')) {
+                const isPdfType = ['Insurance', 'Lease', 'Invoice'].includes(doc.type) || (doc.name || '').toLowerCase().endsWith('.pdf');
+                if (!contentType || contentType === 'application/octet-stream' || contentType.includes('image/') || contentType.includes('text/')) {
+                    if (urlLower.endsWith('.pdf') || ext.endsWith('.pdf') || isPdfType) {
                         contentType = 'application/pdf';
                     } else if (urlLower.endsWith('.jpg') || urlLower.endsWith('.jpeg') || ext.endsWith('.jpg') || ext.endsWith('.jpeg')) {
                         contentType = 'image/jpeg';
@@ -95,6 +96,31 @@ exports.downloadDocument = async (req, res) => {
                 response.data.pipe(res);
                 return;
             } catch (proxyErr) {
+                if (proxyErr.response && proxyErr.response.status === 401 && doc.fileUrl.toLowerCase().endsWith('.pdf')) {
+                    console.log('PDF delivery blocked by Cloudinary Free tier. Creating image-based PDF wrapper fallback...');
+                    try {
+                        const PDFDocument = require('pdfkit');
+                        const fallbackUrl = doc.fileUrl.replace(/\.pdf$/i, '.jpg');
+                        const imgResponse = await axios({
+                            method: 'GET',
+                            url: fallbackUrl,
+                            responseType: 'arraybuffer',
+                            headers: {}
+                        });
+
+                        res.setHeader('Content-Type', 'application/pdf');
+                        res.setHeader('Content-Disposition', disposition === 'inline' ? 'inline' : `attachment; filename="${fileName}"`);
+
+                        const pdfDoc = new PDFDocument({ autoFirstPage: false });
+                        pdfDoc.pipe(res);
+                        pdfDoc.addPage({ margin: 0 });
+                        pdfDoc.image(imgResponse.data, 0, 0, { fit: [pdfDoc.page.width, pdfDoc.page.height], align: 'center', valign: 'center' });
+                        pdfDoc.end();
+                        return;
+                    } catch (fbErr) {
+                        console.error('PDF Wrapper Fallback failed:', fbErr.message);
+                    }
+                }
                 console.error('Cloudinary Proxy error:', proxyErr.message);
                 return res.status(500).json({ message: 'Error streaming file from storage' });
             }
@@ -104,7 +130,6 @@ exports.downloadDocument = async (req, res) => {
         // Handle Local Files (Relative)
         const absolutePath = path.resolve(process.cwd(), doc.fileUrl.startsWith('/') ? doc.fileUrl.substring(1) : doc.fileUrl);
 
-        const disposition = req.query.disposition || 'inline';
         if (disposition === 'inline') {
             res.sendFile(absolutePath, (err) => {
                 if (err) {

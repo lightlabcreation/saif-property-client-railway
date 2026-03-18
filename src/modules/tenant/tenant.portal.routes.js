@@ -35,6 +35,8 @@ router.post("/pay", tenantPaymentController.processPayment);
 router.get("/insurance", tenantInsuranceController.getInsurance);
 router.post("/insurance", tenantInsuranceController.uploadInsurance);
 
+router.get("/vehicles", tenantPortalController.getVehicles);
+
 router.get("/reports", tenantPortalController.getReports);
 
 module.exports = router;

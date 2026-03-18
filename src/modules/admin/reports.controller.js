@@ -19,9 +19,13 @@ exports.getReports = async (req, res) => {
         // --- KPI Calculation ---
 
         // Total Revenue (All Payments Received)
-        const allInvoices = await prisma.invoice.findMany({ where: { paidAmount: { gt: 0 } } });
-        const totalRevenue = allInvoices.reduce((sum, i) => sum + parseFloat(i.paidAmount), 0);
-
+        const [allInvoices, allRefunds] = await Promise.all([
+            prisma.invoice.findMany({ where: { paidAmount: { gt: 0 } } }),
+            prisma.refundAdjustment.findMany({ where: { status: 'Completed' } })
+        ]);
+        const grossRevenue = allInvoices.reduce((sum, i) => sum + parseFloat(i.paidAmount), 0);
+        const totalRefunds = allRefunds.reduce((sum, r) => sum + parseFloat(r.amount), 0);
+        const totalRevenue = grossRevenue - totalRefunds;
 
         // Occupancy Rate
         const totalUnits = await prisma.unit.count();
@@ -31,15 +35,29 @@ exports.getReports = async (req, res) => {
         // Active Leases
         const activeLeases = await prisma.lease.count({ where: { status: 'Active' } });
 
-        // Outstanding Dues (Total Remaining Balance)
-        const unpaidInvoices = await prisma.invoice.findMany({
+        // Outstanding Rent Dues (Total Remaining Balance for RENT category)
+        const unpaidRentInvoices = await prisma.invoice.findMany({
             where: {
-                status: { notIn: ['paid', 'draft'] }
+                status: { notIn: ['paid', 'draft'] },
+                category: 'RENT'
             }
         });
-        const outstandingDues = unpaidInvoices.reduce((sum, i) => sum + parseFloat(i.balanceDue), 0);
+        const outstandingRent = unpaidRentInvoices.reduce((sum, i) => sum + parseFloat(i.balanceDue), 0);
 
-
+        // Outstanding Deposit Dues (Total Remaining Balance for Security Deposit category or description)
+        const unpaidDepositInvoices = await prisma.invoice.findMany({
+            where: {
+                status: { notIn: ['paid', 'draft'] },
+                OR: [
+                    { category: 'SECURITY_DEPOSIT' },
+                    { 
+                        category: 'SERVICE',
+                        description: { contains: 'Security Deposit' }
+                    }
+                ]
+            }
+        });
+        const outstandingDeposits = unpaidDepositInvoices.reduce((sum, i) => sum + parseFloat(i.balanceDue), 0);
 
         // --- Graphs Data ---
 
@@ -48,6 +66,15 @@ exports.getReports = async (req, res) => {
         allInvoices.forEach(inv => {
             if (!monthlyMap[inv.month]) monthlyMap[inv.month] = 0;
             monthlyMap[inv.month] += parseFloat(inv.paidAmount);
+        });
+
+        // Subtract refunds from their respective months in the chart
+        allRefunds.forEach(ref => {
+            // Note: the month format in invoices is "MMM 'YY", we match that for consistency
+            const monthStr = ref.date.toLocaleString('en-US', { month: 'short' }) + " '" + ref.date.getFullYear().toString().slice(-2);
+            if (monthlyMap[monthStr] !== undefined) {
+                monthlyMap[monthStr] -= parseFloat(ref.amount);
+            }
         });
 
 
@@ -106,7 +133,9 @@ exports.getReports = async (req, res) => {
                 totalRevenue,
                 occupancyRate,
                 activeLeases,
-                outstandingDues,
+                outstandingRent,
+                outstandingDeposits,
+                outstandingDues: outstandingRent + outstandingDeposits,
                 tenantCount,
                 residentCount
             },
@@ -127,12 +156,42 @@ exports.getRentRoll = async (req, res) => {
         const units = await prisma.unit.findMany({
             include: {
                 property: true,
-                bedroomsList: true,
+                bedroomsList: {
+                    include: {
+                        leases: {
+                            where: { status: 'Active' },
+                            include: { tenant: true }
+                        }
+                    }
+                },
                 leases: {
                     where: { status: 'Active' },
                     include: { tenant: true }
+                },
+                invoices: {
+                    where: { status: { notIn: ['paid', 'draft'] } }
                 }
             }
+        });
+
+        // Also fetch all unpaid invoices for all tenants to calculate balances accurately
+        // (Actually, we can optimize by including invoices in the unit query)
+
+        // Calculate Portfolio-wide Outstanding Balances (for Summary Cards)
+        const allUnpaidInvoices = await prisma.invoice.findMany({
+            where: { status: { notIn: ['paid', 'draft'] } }
+        });
+
+        const unitTypeRates = await prisma.unitTypeRate.findMany();
+
+        let totalOutstandingRent = 0;
+        let totalOutstandingDeposits = 0;
+
+        allUnpaidInvoices.forEach(inv => {
+            const isDeposit = inv.category === 'SECURITY_DEPOSIT' || 
+                             (inv.category === 'SERVICE' && inv.description?.includes('Security Deposit'));
+            if (isDeposit) totalOutstandingDeposits += parseFloat(inv.balanceDue);
+            else if (inv.category === 'RENT') totalOutstandingRent += parseFloat(inv.balanceDue);
         });
 
         let rentRollArray = [];
@@ -141,18 +200,49 @@ exports.getRentRoll = async (req, res) => {
         let vacantUnits = 0;
         let occupiedBedrooms = 0;
         let vacantBedrooms = 0;
-        let totalMonthlyRent = 0;
+        
+        let totalActualMonthlyRent = 0;
+        let totalPotentialMonthlyRent = 0;
+        let totalVacancyLoss = 0;
 
         units.forEach(u => {
             totalUnits++;
             const isFullUnit = u.rentalMode === 'FULL_UNIT';
+            
+            const typeRate = unitTypeRates.find(r => r.typeName.toLowerCase() === (u.unitType || '').toLowerCase());
+            const unitPotentialRent = typeRate ? parseFloat(typeRate.fullUnitRate) : parseFloat(u.rentAmount || 0);
+
             if (isFullUnit) {
-                // Determine if there is an active lease
                 const activeLease = u.leases[0];
+                
+                // Calculate balances for this unit/tenant
+                let unitRentBalance = 0;
+                let unitDepositBalance = 0;
+
+                if (activeLease && activeLease.tenantId) {
+                    // Look at ALL unpaid invoices for this tenant to be safe
+                    allUnpaidInvoices.filter(inv => inv.tenantId === activeLease.tenantId).forEach(inv => {
+                        const isDeposit = inv.category === 'SECURITY_DEPOSIT' || 
+                                         (inv.category === 'SERVICE' && inv.description?.includes('Security Deposit'));
+                        if (isDeposit) unitDepositBalance += parseFloat(inv.balanceDue);
+                        else if (inv.category === 'RENT') unitRentBalance += parseFloat(inv.balanceDue);
+                    });
+                } else {
+                    // Fallback to unit-linked invoices if no active lease but unit has debt? 
+                    // Usually we only show debt for current tenants in rent roll.
+                    u.invoices.forEach(inv => {
+                        const isDeposit = inv.category === 'SECURITY_DEPOSIT' || 
+                                         (inv.category === 'SERVICE' && inv.description?.includes('Security Deposit'));
+                        if (isDeposit) unitDepositBalance += parseFloat(inv.balanceDue);
+                        else if (inv.category === 'RENT') unitRentBalance += parseFloat(inv.balanceDue);
+                    });
+                }
+
                 if (activeLease) {
                     occupiedUnits++;
                     const rent = activeLease.monthlyRent ? parseFloat(activeLease.monthlyRent.toString()) : 0;
-                    totalMonthlyRent += rent;
+                    totalActualMonthlyRent += rent;
+                    totalPotentialMonthlyRent += rent; // If occupied, potential is the actual rent
 
                     rentRollArray.push({
                         id: `unit-${u.id}`,
@@ -164,10 +254,17 @@ exports.getRentRoll = async (req, res) => {
                         startDate: activeLease.startDate,
                         endDate: activeLease.endDate,
                         monthlyRent: rent,
+                        potentialRent: rent,
+                        vacancyLoss: 0,
+                        outstandingRent: unitRentBalance,
+                        outstandingDeposit: unitDepositBalance,
                         status: 'Occupied'
                     });
                 } else {
                     vacantUnits++;
+                    totalPotentialMonthlyRent += unitPotentialRent;
+                    totalVacancyLoss += unitPotentialRent;
+
                     rentRollArray.push({
                         id: `unit-${u.id}`,
                         buildingName: u.property?.name || 'N/A',
@@ -177,41 +274,52 @@ exports.getRentRoll = async (req, res) => {
                         tenantName: '-',
                         startDate: null,
                         endDate: null,
-                        monthlyRent: 0,
+                        monthlyRent: unitPotentialRent, // Shows Potential Rent when vacant
+                        potentialRent: unitPotentialRent,
+                        vacancyLoss: unitPotentialRent,
+                        outstandingRent: unitRentBalance,
+                        outstandingDeposit: unitDepositBalance,
                         status: 'Vacant'
                     });
                 }
             } else {
+                // ... logic for bedrooms ... (already handles potential rent in the loop below)
                 // BEDROOM_WISE mode
                 let unitIsFullyVacant = true;
                 let unitIsFullyOccupied = true;
 
                 if (u.bedroomsList.length === 0) {
                     vacantUnits++;
+                    totalPotentialMonthlyRent += unitPotentialRent;
+                    totalVacancyLoss += unitPotentialRent;
                 } else {
                     u.bedroomsList.forEach(bedroom => {
-                        // Priority 1: Check if there's an active lease specifically for this bedroom
-                        const bLease = u.leases.find(l =>
-                            l.bedroomId === bedroom.id ||
-                            (l.tenant && l.tenant.bedroomId === bedroom.id)
-                        );
+                        const typeRate = unitTypeRates.find(r => r.typeName.toLowerCase() === (u.unitType || '').toLowerCase());
+                        const bPotentialRent = typeRate ? parseFloat(typeRate.singleBedroomRate) : parseFloat(bedroom.rentAmount || 0);
+                        const bLease = bedroom.leases[0] || u.leases.find(l => l.bedroomId === bedroom.id);
+                        
+                        // Calculate balances for this bedroom/tenant
+                        let bRentBalance = 0;
+                        let bDepositBalance = 0;
 
-                        // Priority 2: Check if there's an active FULL_UNIT lease for the entire unit
-                        const unitLease = u.leases.find(l => l.leaseType === 'FULL_UNIT');
+                        if (bLease && bLease.tenantId) {
+                            // Filter invoices from ALL unpaid for this specific tenant
+                            allUnpaidInvoices.filter(inv => inv.tenantId === bLease.tenantId).forEach(inv => {
+                                const isDeposit = inv.category === 'SECURITY_DEPOSIT' || 
+                                                (inv.category === 'SERVICE' && inv.description?.includes('Security Deposit'));
+                                if (isDeposit) bDepositBalance += parseFloat(inv.balanceDue);
+                                else if (inv.category === 'RENT') bRentBalance += parseFloat(inv.balanceDue);
+                            });
+                        }
 
-                        const activeLease = bLease || unitLease;
-
-                        if (activeLease || bedroom.status === 'Occupied') {
+                        if (bLease || bedroom.status === 'Occupied') {
                             occupiedBedrooms++;
                             unitIsFullyVacant = false;
 
-                            if (activeLease) {
-                                const rent = activeLease.monthlyRent ? parseFloat(activeLease.monthlyRent.toString()) : 0;
-                                // Only count rent towards total if it's a bedroom-specific lease
-                                // OR if it's a full unit lease but we're at the first bedroom (to avoid double counting)
-                                if (bLease || (unitLease && bedroom === u.bedroomsList[0])) {
-                                    totalMonthlyRent += rent;
-                                }
+                            if (bLease) {
+                                const rent = bLease.monthlyRent ? parseFloat(bLease.monthlyRent.toString()) : 0;
+                                totalActualMonthlyRent += rent;
+                                totalPotentialMonthlyRent += rent;
 
                                 rentRollArray.push({
                                     id: `bed-${bedroom.id}`,
@@ -219,13 +327,19 @@ exports.getRentRoll = async (req, res) => {
                                     leaseType: 'Bedroom Lease',
                                     unitNumber: u.unitNumber || u.name,
                                     bedroomNumber: bedroom.bedroomNumber,
-                                    tenantName: activeLease.tenant ? (activeLease.tenant.companyName || `${activeLease.tenant.firstName || ''} ${activeLease.tenant.lastName || ''}`.trim() || activeLease.tenant.name || '-') : '-',
-                                    startDate: activeLease.startDate,
-                                    endDate: activeLease.endDate,
+                                    tenantName: bLease.tenant ? (bLease.tenant.companyName || `${bLease.tenant.firstName || ''} ${bLease.tenant.lastName || ''}`.trim() || bLease.tenant.name || '-') : '-',
+                                    startDate: bLease.startDate,
+                                    endDate: bLease.endDate,
                                     monthlyRent: rent,
+                                    potentialRent: rent,
+                                    vacancyLoss: 0,
+                                    outstandingRent: bRentBalance,
+                                    outstandingDeposit: bDepositBalance,
                                     status: 'Occupied'
                                 });
                             } else {
+                                // Occupied but no lease found (fallback)
+                                totalPotentialMonthlyRent += bPotentialRent;
                                 rentRollArray.push({
                                     id: `bed-${bedroom.id}`,
                                     buildingName: u.property?.name || 'N/A',
@@ -236,12 +350,19 @@ exports.getRentRoll = async (req, res) => {
                                     startDate: null,
                                     endDate: null,
                                     monthlyRent: 0,
+                                    potentialRent: bPotentialRent,
+                                    vacancyLoss: 0,
+                                    outstandingRent: 0,
+                                    outstandingDeposit: 0,
                                     status: 'Occupied'
                                 });
                             }
                         } else {
                             vacantBedrooms++;
                             unitIsFullyOccupied = false;
+                            totalPotentialMonthlyRent += bPotentialRent;
+                            totalVacancyLoss += bPotentialRent;
+
                             rentRollArray.push({
                                 id: `bed-${bedroom.id}`,
                                 buildingName: u.property?.name || 'N/A',
@@ -251,7 +372,11 @@ exports.getRentRoll = async (req, res) => {
                                 tenantName: '-',
                                 startDate: null,
                                 endDate: null,
-                                monthlyRent: parseFloat(bedroom.rentAmount || 0),
+                                monthlyRent: bPotentialRent, // Shows Potential Rent when vacant
+                                potentialRent: bPotentialRent,
+                                vacancyLoss: bPotentialRent,
+                                outstandingRent: 0,
+                                outstandingDeposit: 0,
                                 status: 'Vacant'
                             });
                         }
@@ -263,12 +388,6 @@ exports.getRentRoll = async (req, res) => {
                 }
             }
         });
-        // Calculate Total Outstanding Balance (Unpaid rent across all units)
-        const unpaidInvoices = await prisma.invoice.findMany({
-            where: { status: { notIn: ['paid', 'draft'] } },
-            select: { balanceDue: true }
-        });
-        const totalOutstandingBalance = unpaidInvoices.reduce((sum, i) => sum + parseFloat(i.balanceDue), 0);
 
         res.json({
             summary: {
@@ -277,8 +396,12 @@ exports.getRentRoll = async (req, res) => {
                 occupiedBedrooms,
                 vacantUnits,
                 vacantBedrooms,
-                totalMonthlyRent,
-                totalOutstandingBalance
+                totalActualMonthlyRent,
+                totalPotentialMonthlyRent,
+                totalVacancyLoss,
+                totalOutstandingRent,
+                totalOutstandingDeposits,
+                totalOutstandingBalance: totalOutstandingRent + totalOutstandingDeposits
             },
             rentRoll: rentRollArray
         });
@@ -286,5 +409,38 @@ exports.getRentRoll = async (req, res) => {
     } catch (e) {
         console.error(e);
         res.status(500).json({ message: 'Server error generating rent roll' });
+    }
+};
+
+// PUT /api/admin/reports/potential-rent
+exports.updatePotentialRent = async (req, res) => {
+    try {
+        const { id, type, potentialRent } = req.body;
+        
+        if (!id || !type) {
+            return res.status(400).json({ message: 'Missing id or type in request body' });
+        }
+
+        const rent = parseFloat(potentialRent || 0);
+        const cleanId = parseInt(id.toString().replace('unit-', '').replace('bed-', ''));
+
+        if (type === 'Full Unit' || type.toLowerCase().includes('unit')) {
+            await prisma.unit.update({
+                where: { id: cleanId },
+                data: { rentAmount: rent }
+            });
+        } else if (type === 'Bedroom Lease' || type.toLowerCase().includes('bedroom')) {
+            await prisma.bedroom.update({
+                where: { id: cleanId },
+                data: { rentAmount: rent }
+            });
+        } else {
+            return res.status(400).json({ message: 'Invalid lease type parameter' });
+        }
+
+        res.json({ success: true, message: 'Potential rent updated successfully' });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ message: 'Server error updating potential rent' });
     }
 };

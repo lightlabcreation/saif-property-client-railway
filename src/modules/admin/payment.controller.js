@@ -66,7 +66,7 @@ exports.getOutstandingDues = async (req, res) => {
             return {
                 id: due.id,
                 invoice: due.invoiceNo,
-                tenant: due.tenant?.name || 'Unknown Tenant',
+                tenant: due.tenant?.name || (due.tenant?.firstName ? `${due.tenant.firstName} ${due.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
                 unit: due.unit?.name || 'Unknown Unit',
                 leaseType: due.unit?.rentalMode === 'FULL_UNIT' ? 'Full Unit' : (due.unit?.rentalMode === 'BEDROOM_WISE' ? 'Bedroom' : 'N/A'),
                 amount: balanceDue, // This is what the UI shows as "Due"
@@ -108,7 +108,7 @@ exports.getReceivedPayments = async (req, res) => {
                 id: payment.invoiceNo,
                 tenantId: payment.tenantId,
                 unitId: payment.unitId,
-                tenant: payment.tenant.name,
+                tenant: payment.tenant?.name || (payment.tenant?.firstName ? `${payment.tenant.firstName} ${payment.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
                 unit: payment.unit.name,
                 type: payment.unit.rentalMode === 'FULL_UNIT' ? 'Full Unit' : 'Bedroom',
                 amount: parseFloat(payment.amount),
