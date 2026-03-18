@@ -176,9 +176,30 @@ exports.getConversations = async (req, res) => {
                     name: true,
                     role: true,
                     email: true,
-                    type: true
+                    type: true,
+                    buildingId: true,
+                    leases: {
+                        where: { status: 'Active' },
+                        select: { unit: { select: { propertyId: true } } }
+                    },
+                    properties: {
+                        select: { id: true }
+                    }
                 }
             });
+
+            const formattedUsers = users.map(u => ({
+                id: u.id,
+                name: u.name,
+                role: u.role,
+                email: u.email,
+                type: u.type,
+                buildingIds: [
+                    u.buildingId,
+                    ...(u.leases || []).map(l => l.unit?.propertyId),
+                    ...(u.properties || []).map(p => p.id)
+                ].filter(Boolean)
+            }));
 
             // Fetch all Residents (Occupants)
             const residents = await prisma.user.findMany({
@@ -193,7 +214,8 @@ exports.getConversations = async (req, res) => {
                     },
                     residentLease: {
                         select: {
-                            id: true
+                            id: true,
+                            unit: { select: { propertyId: true } }
                         }
                     }
                 }
@@ -210,11 +232,15 @@ exports.getConversations = async (req, res) => {
                 tenantId: r.parentId,
                 tenantName: r.parent?.name,
                 leaseId: r.leaseId,
-                isResident: true
+                isResident: true,
+                buildingIds: [
+                    r.buildingId,
+                    r.residentLease?.unit?.propertyId
+                ].filter(Boolean)
             }));
 
             // Combine users and residents
-            const allRecipients = [...users, ...formattedResidents];
+            const allRecipients = [...formattedUsers, ...formattedResidents];
 
             // Attach metadata (unread count, last message)
             const recipientsWithMetadata = await Promise.all(allRecipients.map(async (recipient) => {

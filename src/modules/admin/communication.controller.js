@@ -248,7 +248,7 @@ exports.bulkDeleteLogs = async (req, res) => {
 // POST /api/admin/communication
 exports.sendMessage = async (req, res) => {
     try {
-        const { recipient, subject, message, type } = req.body;
+        const { recipient, subject, message, type, buildingId } = req.body;
 
         let twilioSid = null;
         let twilioSids = [];
@@ -285,7 +285,13 @@ exports.sendMessage = async (req, res) => {
                         where: {
                             role: 'TENANT',
                             type: { not: 'RESIDENT' },
-                            phone: { not: null }
+                            phone: { not: null },
+                            ...(buildingId && {
+                                OR: [
+                                    { leases: { some: { status: 'Active', unit: { propertyId: parseInt(buildingId) } } } },
+                                    { buildingId: parseInt(buildingId) }
+                                ]
+                            })
                         },
                         select: { id: true, phone: true, name: true }
                     });
@@ -294,7 +300,13 @@ exports.sendMessage = async (req, res) => {
                     users = await prisma.user.findMany({
                         where: {
                             type: 'RESIDENT',
-                            phone: { not: null }
+                            phone: { not: null },
+                            ...(buildingId && {
+                                OR: [
+                                    { residentLease: { unit: { propertyId: parseInt(buildingId) } } },
+                                    { buildingId: parseInt(buildingId) }
+                                ]
+                            })
                         },
                         select: { id: true, phone: true, name: true }
                     });
@@ -303,7 +315,10 @@ exports.sendMessage = async (req, res) => {
                     users = await prisma.user.findMany({
                         where: {
                             role: 'OWNER',
-                            phone: { not: null }
+                            phone: { not: null },
+                            ...(buildingId && {
+                                properties: { some: { id: parseInt(buildingId) } }
+                            })
                         },
                         select: { id: true, phone: true, name: true }
                     });
