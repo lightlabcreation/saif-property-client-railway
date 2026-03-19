@@ -49,6 +49,14 @@ exports.createRefund = async (req, res) => {
 
             const refundamt = parseFloat(amount) || 0;
 
+            // Auto-manage issuedDate based on status
+            let finalIssuedDate = issuedDate ? new Date(issuedDate) : null;
+            if (status === 'Completed' && !finalIssuedDate) {
+                finalIssuedDate = new Date(); // Default to today if completed
+            } else if (status === 'Pending') {
+                finalIssuedDate = null; // Clear if pending
+            }
+
             const refund = await tx.refundAdjustment.create({
                 data: {
                     requestId,
@@ -59,7 +67,7 @@ exports.createRefund = async (req, res) => {
                     amount: refundamt,
                     status: status || 'Pending',
                     date: date ? new Date(date) : new Date(),
-                    issuedDate: issuedDate ? new Date(issuedDate) : null,
+                    issuedDate: finalIssuedDate,
                     method: method || null,
                     referenceNumber: referenceNumber || null,
                     proofUrl: proofUrl || null,
@@ -78,21 +86,6 @@ exports.createRefund = async (req, res) => {
                 });
             }
 
-            // Ledger Entry (Accounting Requirement)
-            const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
-            const prevBalance = lastTx ? parseFloat(lastTx.balance) : 0;
-
-            await tx.transaction.create({
-                data: {
-                    date: new Date(),
-                    description: `${type} Refund - ${requestId}`,
-                    type: type.toLowerCase().includes('deposit') ? 'Liability' : 'Expense',
-                    amount: refundamt,
-                    balance: prevBalance - refundamt,
-                    status: 'Completed'
-                }
-            });
-
             return refund;
         });
 
@@ -109,18 +102,54 @@ exports.updateRefund = async (req, res) => {
         const { status, reason, amount, issuedDate, method, referenceNumber, proofUrl, outcomeReason } = req.body;
         const { id } = req.params;
 
-        const updated = await prisma.refundAdjustment.update({
-            where: { requestId: id },
-            data: {
-                status,
-                reason,
-                amount: amount ? parseFloat(amount) : undefined,
-                issuedDate: issuedDate ? new Date(issuedDate) : undefined,
-                method: method !== undefined ? method : undefined,
-                referenceNumber: referenceNumber !== undefined ? referenceNumber : undefined,
-                proofUrl: proofUrl !== undefined ? proofUrl : undefined,
-                outcomeReason: outcomeReason !== undefined ? outcomeReason : undefined
+        const updated = await prisma.$transaction(async (tx) => {
+            const current = await tx.refundAdjustment.findUnique({
+                where: { requestId: id }
+            });
+
+            if (!current) throw new Error('Refund not found');
+
+            // Smart Date Logic: Auto-populate issuedDate on completion
+            let finalIssuedDate = issuedDate ? new Date(issuedDate) : (current.issuedDate || undefined);
+            if (status === 'Completed' && current.status !== 'Completed' && !issuedDate) {
+                finalIssuedDate = new Date(); // Set to now if completing
+            } else if (status === 'Pending') {
+                finalIssuedDate = null; // Clear if pending
             }
+
+            const updatedRefund = await tx.refundAdjustment.update({
+                where: { requestId: id },
+                data: {
+                    status,
+                    reason,
+                    amount: amount ? parseFloat(amount) : undefined,
+                    issuedDate: finalIssuedDate,
+                    method: method !== undefined ? method : undefined,
+                    referenceNumber: referenceNumber !== undefined ? referenceNumber : undefined,
+                    proofUrl: proofUrl !== undefined ? proofUrl : undefined,
+                    outcomeReason: outcomeReason !== undefined ? outcomeReason : undefined
+                }
+            });
+
+            // Ledger Entry (Accounting Requirement) - Only if moving TO Completed
+            if (status === 'Completed' && current.status !== 'Completed') {
+                const refundamt = parseFloat(amount || updatedRefund.amount) || 0;
+                const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
+                const prevBalance = lastTx ? parseFloat(lastTx.balance) : 0;
+
+                await tx.transaction.create({
+                    data: {
+                        date: new Date(),
+                        description: `${updatedRefund.type} Refund - ${id}`,
+                        type: updatedRefund.type.toLowerCase().includes('deposit') ? 'Liability' : 'Expense',
+                        amount: refundamt,
+                        balance: prevBalance - refundamt,
+                        status: 'Completed'
+                    }
+                });
+            }
+
+            return updatedRefund;
         });
 
         res.json(updated);
@@ -173,13 +202,23 @@ exports.calculateRefund = async (req, res) => {
 
         const totalServiceCharges = serviceInvoices.reduce((sum, inv) => sum + parseFloat(inv.amount || 0), 0);
 
-        // 3. Final Calculation Ratio
-        const finalRefundAmount = Math.max(0, totalDepositPaid - totalServiceCharges);
+        // 3. Subtract existing refunds already processed
+        const existingRefunds = await prisma.refundAdjustment.findMany({
+            where: {
+                tenantId,
+                status: { in: ['Completed', 'Issued'] }
+            }
+        });
+        const totalRefundedAlready = existingRefunds.reduce((sum, r) => sum + parseFloat(r.amount || 0), 0);
+
+        // 4. Final Calculation Ratio
+        const finalRefundAmount = Math.max(0, totalDepositPaid - totalServiceCharges - totalRefundedAlready);
 
         res.json({
             tenantId,
             totalDepositPaid,
             totalServiceCharges,
+            totalRefundedAlready,
             finalRefundAmount,
             appliedServiceInvoices: serviceInvoices.map(inv => ({ invoiceNo: inv.invoiceNo, amount: parseFloat(inv.amount) }))
         });
