@@ -87,7 +87,13 @@ exports.getDashboard = async (req, res) => {
             nextDueDate,
             leaseStatus: activeLease ? 'Active' : 'No Active Lease',
             leaseExpiry: activeLease ? activeLease.endDate : null,
-            insuranceStatus: tenant.insurances.length > 0 ? 'Compliant' : 'Missing',
+            insuranceStatus: (() => {
+                const activeIns = tenant.insurances.find(i => i.status === 'ACTIVE' || i.status === 'EXPIRING_SOON');
+                if (activeIns) {
+                    return activeIns.status === 'EXPIRING_SOON' ? 'Expiring Soon' : 'Compliant';
+                }
+                return 'Missing';
+            })(),
             vehicleCount: tenant.vehicles.length,
             unauthorizedVehicles: tenant.vehicles.filter(v => {
                 if (!v.lease) return true;

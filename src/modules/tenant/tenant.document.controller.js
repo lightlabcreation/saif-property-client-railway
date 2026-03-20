@@ -112,22 +112,26 @@ exports.downloadDocument = async (req, res) => {
         const { id } = req.params;
 
         // Check if document is owned by tenant OR linked to tenant
-        const document = await prisma.document.findFirst({
+        let document = await prisma.document.findFirst({
             where: {
                 id: parseInt(id),
                 OR: [
                     { userId }, // Direct ownership
-                    {
-                        links: {
-                            some: {
-                                entityType: 'USER',
-                                entityId: userId
-                            }
-                        }
-                    }
+                    { links: { some: { entityType: 'USER', entityId: userId } } }
                 ]
             }
         });
+
+        // Fallback: Check if it's attached as their active insurance document
+        if (!document) {
+            const insuranceCheck = await prisma.insurance.findFirst({
+                where: { userId, uploadedDocumentId: parseInt(id) },
+                include: { document: true }
+            });
+            if (insuranceCheck && insuranceCheck.document) {
+                document = insuranceCheck.document;
+            }
+        }
 
         if (!document || !document.fileUrl) {
             return res.status(404).json({ message: 'Document not found' });

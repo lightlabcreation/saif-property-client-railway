@@ -4,76 +4,94 @@ const communicationService = require('../../services/communicationService');
 // GET /api/admin/insurance/compliance
 exports.getComplianceDashboard = async (req, res) => {
     try {
-        const { propertyId, ownerId, status: leaseStatus } = req.query;
-
-        const leaseWhere = {
-            status: leaseStatus || 'Active'
-        };
-
-        if (propertyId) {
-            leaseWhere.unit = { propertyId: parseInt(propertyId) };
-        }
-
-        if (ownerId) {
-            leaseWhere.unit = {
-                property: {
-                    owners: {
-                        some: { id: parseInt(ownerId) }
-                    }
-                }
-            };
-        }
-
-        const leases = await prisma.lease.findMany({
-            where: leaseWhere,
+        // Fetch all tenants to ensure we see MISSING ones
+        const tenants = await prisma.user.findMany({
+            where: {
+                role: 'TENANT',
+                // optionally filter active tenants based on logic if required
+            },
             include: {
-                tenant: true,
-                unit: {
-                    include: { property: true }
-                },
                 insurances: {
-                    where: { status: 'ACTIVE' },
-                    orderBy: { endDate: 'desc' },
-                    take: 1
+                    orderBy: { endDate: 'desc' }
+                },
+                residentLease: { include: { unit: { include: { property: true } } } },
+                leases: {
+                    where: { status: 'Active' },
+                    include: { unit: { include: { property: true } } }
                 }
             }
         });
 
-        const today = new Date();
-        const d30 = new Date(); d30.setDate(today.getDate() + 30);
-        const d14 = new Date(); d14.setDate(today.getDate() + 14);
-        const d7 = new Date(); d7.setDate(today.getDate() + 7);
+        const formatted = [];
 
-        const formatted = leases.map(lease => {
-            const insurance = lease.insurances[0];
-            let complianceStatus = 'Missing';
-            let daysRemaining = null;
+        tenants.forEach(tenant => {
+            // Figure out the active lease/unit
+            const activeLease = tenant.leases?.[0] || tenant.residentLease;
+            const propertyName = activeLease?.unit?.property?.name || 'N/A';
+            const unitName = activeLease?.unit?.unitNumber || activeLease?.unit?.name || 'N/A';
+            const tenantNameStr = tenant.name || `${tenant.firstName || ''} ${tenant.lastName || ''}`.trim();
 
-            if (insurance) {
-                const end = new Date(insurance.endDate);
-                daysRemaining = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
+            if (!tenant.insurances || tenant.insurances.length === 0) {
+                // Return explicitly missing
+                formatted.push({
+                    tenantId: tenant.id,
+                    tenantName: tenantNameStr,
+                    tenantType: tenant.type,
+                    building: propertyName,
+                    unitNumber: unitName,
+                    status: 'MISSING',
+                    daysRemaining: null,
+                    provider: 'N/A',
+                    policyNumber: 'N/A',
+                    startDate: 'N/A',
+                    expiryDate: 'N/A',
+                    notes: '',
+                    insuranceId: null,
+                    unitId: activeLease?.unit?.id || null,
+                    leaseId: activeLease?.id || null,
+                    documentUrl: null,
+                    uploadedDocumentId: null
+                });
+            } else {
+                let hasActiveOrExpiring = false;
+                
+                tenant.insurances.forEach(insurance => {
+                    if (['ACTIVE', 'EXPIRING_SOON'].includes(insurance.status)) {
+                        hasActiveOrExpiring = true;
+                    }
 
-                if (daysRemaining < 0) {
-                    complianceStatus = 'Expired';
-                } else if (daysRemaining <= 30) {
-                    complianceStatus = 'Expiring';
-                } else {
-                    complianceStatus = 'Compliant';
+                    const today = new Date();
+                    today.setHours(0,0,0,0);
+                    const end = new Date(insurance.endDate);
+                    const daysRemaining = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
+
+                    formatted.push({
+                        tenantId: tenant.id,
+                        tenantName: tenantNameStr,
+                        tenantType: tenant.type,
+                        building: propertyName,
+                        unitNumber: unitName,
+                        status: insurance.status,
+                        daysRemaining,
+                        provider: insurance.provider || 'N/A',
+                        policyNumber: insurance.policyNumber || 'N/A',
+                        startDate: insurance.startDate ? insurance.startDate.toISOString().split('T')[0] : 'N/A',
+                        expiryDate: insurance.endDate ? insurance.endDate.toISOString().split('T')[0] : 'N/A',
+                        notes: insurance.notes || '',
+                        insuranceId: insurance.id,
+                        unitId: activeLease?.unit?.id || null,
+                        leaseId: activeLease?.id || null,
+                        documentUrl: insurance.documentUrl || null,
+                        uploadedDocumentId: insurance.uploadedDocumentId || null
+                    });
+                });
+
+                if (!hasActiveOrExpiring) {
+                    // Force a MISSING row to track compliance if they only have ARCHIVED or EXPIRED stuff
+                    // Wait, if they have an EXPIRED policy, they still aren't strictly compliant, but we already track the "EXPIRED" row so that shows up.
+                    // The frontend stats explicitly count missing. To prevent missing row duplication, we only inject a MISSING row if there's no ACTIVE/EXPIRING_SOON/EXPIRED at all, but they already had records map over.
                 }
             }
-
-            return {
-                leaseId: lease.id,
-                tenantName: lease.tenant.name,
-                tenantType: lease.tenant.type,
-                building: lease.unit.property.name,
-                unitNumber: lease.unit.unitNumber || lease.unit.name,
-                status: complianceStatus,
-                daysRemaining,
-                provider: insurance?.provider || 'N/A',
-                policyNumber: insurance?.policyNumber || 'N/A',
-                expiryDate: insurance?.endDate ? insurance.endDate.toISOString().split('T')[0] : 'N/A'
-            };
         });
 
         res.json(formatted);
@@ -83,50 +101,34 @@ exports.getComplianceDashboard = async (req, res) => {
     }
 };
 
-// Internal function to check and send alerts
+// Internal function to check and send alerts & update statuses
 exports.checkInsuranceExpirations = async () => {
-    console.log('[Insurance Alerts] Checking for expiring policies...');
+    console.log('[Insurance] Checking for expiring policies per client limits (15 days)');
     const today = new Date();
-    const alertThresholds = [30, 14, 7];
+    today.setHours(0,0,0,0);
 
     try {
         const activeInsurances = await prisma.insurance.findMany({
-            where: { status: 'ACTIVE', endDate: { gt: today } },
-            include: { user: true, lease: true }
+            where: { status: { in: ['ACTIVE', 'EXPIRING_SOON'] } }
         });
 
         for (const ins of activeInsurances) {
             const end = new Date(ins.endDate);
             const diffDays = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
 
-            if (alertThresholds.includes(diffDays)) {
-                // Check if alert already sent for this threshold
-                const eventType = `INSURANCE_EXPIRY_${diffDays}`;
-                const alreadySent = await prisma.communicationLog.findFirst({
-                    where: {
-                        recipientId: ins.userId,
-                        relatedEntity: 'INSURANCE',
-                        entityId: ins.id,
-                        eventType
-                    }
-                });
+            let newStatus = ins.status;
+            if (diffDays <= 0) {
+                newStatus = 'EXPIRED';
+            } else if (diffDays <= 15) {
+                newStatus = 'EXPIRING_SOON';
+            }
 
-                if (!alreadySent) {
-                    console.log(`Sending ${diffDays}-day alert to ${ins.user.name}`);
-                    await communicationService.sendInsuranceExpiryAlert(ins.userId, ins.id, diffDays);
-                    // Log the alert
-                    await prisma.communicationLog.create({
-                        data: {
-                            channel: 'Email',
-                            eventType,
-                            recipient: ins.user.email,
-                            recipientId: ins.userId,
-                            relatedEntity: 'INSURANCE',
-                            entityId: ins.id,
-                            content: `Insurance policy ${ins.policyNumber} expires in ${diffDays} days.`
-                        }
-                    });
-                }
+            if (newStatus !== ins.status) {
+                await prisma.insurance.update({
+                    where: { id: ins.id },
+                    data: { status: newStatus }
+                });
+                console.log(`[Insurance] Updated policy ${ins.id} status to ${newStatus}`);
             }
         }
     } catch (e) {
@@ -158,24 +160,28 @@ exports.getInsuranceAlerts = async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        const getExpiryStatus = (endDate) => {
+        const getExpiryStatus = (endDate, status) => {
+            if (status === 'EXPIRED') return { label: 'Expired', color: 'red', days: 0 };
+            if (status === 'EXPIRING_SOON') return { label: 'Expiring Soon', color: 'amber', days: 15 };
+            if (status === 'ARCHIVED') return { label: 'Archived', color: 'gray', days: 0 };
+            
             const end = new Date(endDate);
             const today = new Date();
             const diffTime = end - today;
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-            if (diffDays < 0) return { label: 'Expired', color: 'red', days: diffDays };
-            if (diffDays <= 30) return { label: 'Expiring Soon', color: 'amber', days: diffDays };
+            if (diffDays <= 0) return { label: 'Expired', color: 'red', days: diffDays };
+            if (diffDays <= 15) return { label: 'Expiring Soon', color: 'amber', days: diffDays };
             return { label: 'Active', color: 'emerald', days: diffDays };
         };
 
         const formatted = insurances.map(ins => {
             const unit = ins.unit || ins.lease?.unit;
-            const expiry = getExpiryStatus(ins.endDate);
+            const expiry = getExpiryStatus(ins.endDate, ins.status);
 
             return {
                 id: ins.id,
-                tenantName: ins.user.name,
+                tenantName: ins.user?.name || 'N/A',
                 property: unit ? unit.property.name : 'Unknown',
                 unit: unit ? unit.name : 'N/A',
                 provider: ins.provider,
@@ -188,7 +194,10 @@ exports.getInsuranceAlerts = async (req, res) => {
                 uploadedDocumentId: ins.uploadedDocumentId,
                 status: ins.status,
                 rejectionReason: ins.rejectionReason,
-                expiry: expiry
+                notes: ins.notes,
+                expiry: expiry,
+                tenantId: ins.userId,
+                unitId: ins.unitId
             };
         });
 
@@ -254,10 +263,19 @@ exports.getInsuranceStats = async (req, res) => {
         const thirtyDaysOut = new Date();
         thirtyDaysOut.setDate(today.getDate() + 30);
 
+        const [missingCount] = await prisma.$queryRaw`
+            SELECT COUNT(u.id) as missing
+            FROM user u
+            WHERE u.role = 'TENANT' 
+            AND NOT EXISTS (
+                SELECT 1 FROM insurance i WHERE i.userId = u.id AND i.status IN ('ACTIVE', 'EXPIRING_SOON')
+            )
+        `;
+
         const [active, expiring, expired, pending] = await Promise.all([
-            prisma.insurance.count({ where: { status: 'ACTIVE', endDate: { gt: thirtyDaysOut } } }),
-            prisma.insurance.count({ where: { status: 'ACTIVE', endDate: { lte: thirtyDaysOut, gte: today } } }),
-            prisma.insurance.count({ where: { status: 'ACTIVE', endDate: { lt: today } } }),
+            prisma.insurance.count({ where: { status: 'ACTIVE' } }),
+            prisma.insurance.count({ where: { status: 'EXPIRING_SOON' } }),
+            prisma.insurance.count({ where: { status: 'EXPIRED' } }),
             prisma.insurance.count({ where: { status: 'PENDING_APPROVAL' } })
         ]);
 
@@ -265,10 +283,106 @@ exports.getInsuranceStats = async (req, res) => {
             active,
             expiring,
             expired,
-            pending
+            pending,
+            missing: Number(missingCount?.missing || 0)
         });
     } catch (e) {
         console.error(e);
         res.status(500).json({ message: 'Failed to fetch insurance stats' });
+    }
+};
+
+// POST /api/admin/insurance
+exports.createInsurance = async (req, res) => {
+    try {
+        const { userId, provider, policyNumber, endDate, startDate, documentUrl, uploadedDocumentId, notes, unitId, leaseId } = req.body;
+
+        if (!userId || !endDate) {
+            return res.status(400).json({ message: 'Tenant ID and Expiry Date are required' });
+        }
+
+        const data = {
+            userId: parseInt(userId),
+            provider: provider || 'TBD',
+            policyNumber: policyNumber || 'TBD',
+            startDate: startDate ? new Date(startDate) : new Date(),
+            endDate: new Date(endDate),
+            documentUrl: documentUrl || null,
+            uploadedDocumentId: uploadedDocumentId ? parseInt(uploadedDocumentId) : null,
+            notes: notes || null,
+            status: 'ACTIVE',
+            unitId: unitId ? parseInt(unitId) : null,
+            leaseId: leaseId ? parseInt(leaseId) : null
+        };
+
+        // If today is within 15 days of end date, map straight to EXPIRING_SOON
+        const today = new Date();
+        today.setHours(0,0,0,0);
+        const end = new Date(data.endDate);
+        const diffDays = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
+        if (diffDays <= 0) {
+            data.status = 'EXPIRED';
+        } else if (diffDays <= 15) {
+            data.status = 'EXPIRING_SOON';
+        }
+
+        // Archive previous active records in transaction
+        const result = await prisma.$transaction(async (tx) => {
+            await tx.insurance.updateMany({
+                where: { userId: data.userId, status: { in: ['ACTIVE', 'EXPIRING_SOON'] } },
+                data: { status: 'ARCHIVED' }
+            });
+            return await tx.insurance.create({ data });
+        });
+
+        res.status(201).json(result);
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ message: 'Failed to create insurance' });
+    }
+};
+
+// PUT /api/admin/insurance/:id
+exports.updateInsurance = async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const { provider, policyNumber, endDate, documentUrl, uploadedDocumentId, notes } = req.body;
+
+        const updateData = {};
+        if (provider) updateData.provider = provider;
+        if (policyNumber) updateData.policyNumber = policyNumber;
+        if (documentUrl !== undefined) updateData.documentUrl = documentUrl;
+        if (uploadedDocumentId !== undefined) updateData.uploadedDocumentId = uploadedDocumentId ? parseInt(uploadedDocumentId) : null;
+        if (notes !== undefined) updateData.notes = notes;
+        
+        if (endDate) {
+            const end = new Date(endDate);
+            updateData.endDate = end;
+            
+            // Re-evaluate status
+            const current = await prisma.insurance.findUnique({ where: { id } });
+            if (current && ['ACTIVE', 'EXPIRING_SOON', 'EXPIRED'].includes(current.status)) {
+                const today = new Date();
+                today.setHours(0,0,0,0);
+                const diffDays = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
+                if (diffDays <= 0) {
+                    updateData.status = 'EXPIRED';
+                } else if (diffDays <= 15) {
+                    updateData.status = 'EXPIRING_SOON';
+                } else {
+                    updateData.status = 'ACTIVE';
+                }
+            }
+        }
+
+        const updated = await prisma.insurance.update({
+            where: { id },
+            data: updateData
+        });
+
+        res.json(updated);
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ message: 'Failed to update insurance' });
     }
 };

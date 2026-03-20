@@ -205,6 +205,7 @@ model Insurance {
   coverageType       String?
   leaseId            Int?
   rejectionReason    String?         @db.Text
+  notes              String?         @db.Text
   status             InsuranceStatus @default(PENDING_APPROVAL)
   unitId             Int?
   uploadedDocumentId Int?
@@ -550,9 +551,11 @@ model QuickBooksConfig {
 enum InsuranceStatus {
   PENDING_APPROVAL
   ACTIVE
+  EXPIRING_SOON
   EXPIRING
   EXPIRED
   REJECTED
+  ARCHIVED
 }
 
 enum InvoiceCategory {

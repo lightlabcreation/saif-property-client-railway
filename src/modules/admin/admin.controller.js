@@ -159,19 +159,27 @@ exports.getDashboardStats = async (req, res) => {
 
         const expiredInsurance = await prisma.insurance.count({
             where: {
-                endDate: { lt: today },
+                status: 'EXPIRED',
                 ...insuranceFilter
             }
         });
 
-        const soonDate = new Date();
-        soonDate.setDate(today.getDate() + 30);
         const expiringSoon = await prisma.insurance.count({
             where: {
-                endDate: { gt: today, lte: soonDate },
+                status: 'EXPIRING_SOON',
                 ...insuranceFilter
             }
         });
+        
+        const missingInsuranceArr = await prisma.$queryRaw`
+            SELECT COUNT(u.id) as count
+            FROM user u
+            WHERE u.role = 'TENANT'
+            AND NOT EXISTS (
+                SELECT 1 FROM insurance i WHERE i.userId = u.id AND i.status IN ('ACTIVE', 'EXPIRING_SOON')
+            )
+        `;
+        const missingInsuranceCount = Number(missingInsuranceArr?.[0]?.count || 0);
  
         // 7. Vehicle Alerts
         const allVehicles = await prisma.vehicle.findMany({
@@ -308,7 +316,8 @@ exports.getDashboardStats = async (req, res) => {
             monthlyRevenue: projectedRevenue, // Backward compatibility
             insuranceAlerts: {
                 expired: expiredInsurance,
-                expiringSoon: expiringSoon
+                expiringSoon: expiringSoon,
+                missing: missingInsuranceCount
             },
             leaseAlerts: {
                 expired: expiredLeasesCountTotal,
