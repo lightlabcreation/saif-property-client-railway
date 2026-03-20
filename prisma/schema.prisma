@@ -52,6 +52,10 @@ model User {
   company           Company?           @relation("CompanyUsers", fields: [companyId], references: [id])
   quickBooksConfig  QuickBooksConfig?
   vehicles          Vehicle[]          @relation("TenantVehicles")
+  title             String?            // Identification title (e.g. Property Manager)
+  isInvited         Boolean            @default(false)
+  isActive          Boolean            @default(true)
+  permissions       Permission[]
 
   @@index([leaseId], map: "user_leaseId_fkey")
   @@index([parentId], map: "user_parentId_fkey")
@@ -579,6 +583,7 @@ enum Role {
   ADMIN
   OWNER
   TENANT
+  COWORKER
 }
 
 enum RentalMode {
@@ -611,6 +616,20 @@ model Vehicle {
   @@index([tenantId], map: "vehicle_tenantId_fkey")
   @@index([leaseId], map: "vehicle_leaseId_fkey")
   @@map("vehicle")
+}
+
+model Permission {
+  id         Int     @id @default(autoincrement())
+  userId     Int
+  moduleName String  // The section name (e.g. "Tenants", "Invoices")
+  canView    Boolean @default(false)
+  canAdd     Boolean @default(false)
+  canEdit    Boolean @default(false)
+  canDelete  Boolean @default(false)
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("permission")
 }
 
 model ServiceFeeItem {

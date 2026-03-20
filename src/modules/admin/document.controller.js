@@ -171,7 +171,9 @@ exports.uploadDocument = async (req, res) => {
         if (file.tempFilePath) {
             const isPdf = file.name.toLowerCase().endsWith('.pdf');
             const result = await uploadToCloudinary(file.tempFilePath, 'admin_documents', {
-                resource_type: isPdf ? 'raw' : 'auto'
+                resource_type: isPdf ? 'raw' : 'auto',
+                public_id: `${type.toLowerCase().replace(/\s/g, '_')}-${Date.now()}`,
+                use_filename: false
             });
             fileUrl = result.secure_url;
         } else {
@@ -253,5 +255,38 @@ exports.deleteDocument = async (req, res) => {
     } catch (e) {
         console.error(e);
         res.status(500).json({ message: 'Failed to delete document' });
+    }
+};
+
+// GET /api/admin/documents/download-proof?url=...
+exports.downloadProofFromUrl = async (req, res) => {
+    try {
+        const { url } = req.query;
+        if (!url) return res.status(400).json({ message: 'URL is required' });
+
+        // Stream from Cloudinary with no auth leak
+        const response = await axios({
+            method: 'GET',
+            url: url,
+            responseType: 'stream',
+            timeout: 15000
+        });
+
+        // FORCE A CLEAN NAME - Kill the 'tmp-' once and for all
+        const contentType = response.headers['content-type'] || 'application/pdf';
+        const isImage = contentType.startsWith('image/');
+        const extension = isImage ? `.${contentType.split('/')[1]}` : '.pdf';
+        const timeStamp = new Date().toISOString().split('T')[0];
+        const fileName = `Proof-Document-${timeStamp}${extension}`;
+        
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        res.setHeader('Content-Type', contentType);
+
+        response.data.pipe(res);
+    } catch (e) {
+        console.error('Proxy download failed:', e.message);
+        if (!res.headersSent) {
+            res.status(500).json({ message: 'Could not stream the file from storage' });
+        }
     }
 };

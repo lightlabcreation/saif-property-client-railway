@@ -19,9 +19,10 @@ cloudinary.config({
  */
 const uploadToCloudinary = async (filePath, folder = 'property_management', options = {}) => {
     try {
+        const isPdf = filePath.toLowerCase().endsWith('.pdf');
         const fileOptions = {
             folder: folder,
-            resource_type: options.resource_type || 'auto',
+            resource_type: options.resource_type || (isPdf ? 'raw' : 'auto'),
             use_filename: true,
             unique_filename: true,
             ...options

@@ -8,7 +8,7 @@ exports.getComplianceDashboard = async (req, res) => {
         const tenants = await prisma.user.findMany({
             where: {
                 role: 'TENANT',
-                // optionally filter active tenants based on logic if required
+                type: { not: 'RESIDENT' }
             },
             include: {
                 insurances: {
@@ -267,16 +267,18 @@ exports.getInsuranceStats = async (req, res) => {
             SELECT COUNT(u.id) as missing
             FROM user u
             WHERE u.role = 'TENANT' 
+            AND u.type != 'RESIDENT'
             AND NOT EXISTS (
                 SELECT 1 FROM insurance i WHERE i.userId = u.id AND i.status IN ('ACTIVE', 'EXPIRING_SOON')
             )
         `;
 
+        const userFilter = { role: 'TENANT', type: { not: 'RESIDENT' } };
         const [active, expiring, expired, pending] = await Promise.all([
-            prisma.insurance.count({ where: { status: 'ACTIVE' } }),
-            prisma.insurance.count({ where: { status: 'EXPIRING_SOON' } }),
-            prisma.insurance.count({ where: { status: 'EXPIRED' } }),
-            prisma.insurance.count({ where: { status: 'PENDING_APPROVAL' } })
+            prisma.insurance.count({ where: { status: 'ACTIVE', user: userFilter } }),
+            prisma.insurance.count({ where: { status: 'EXPIRING_SOON', user: userFilter } }),
+            prisma.insurance.count({ where: { status: 'EXPIRED', user: userFilter } }),
+            prisma.insurance.count({ where: { status: 'PENDING_APPROVAL', user: userFilter } })
         ]);
 
         res.json({
