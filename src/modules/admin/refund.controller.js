@@ -18,7 +18,9 @@ exports.getRefunds = async (req, res) => {
             type: r.type,
             reason: r.reason,
             tenant: r.tenant?.name || (r.tenant?.firstName ? `${r.tenant.firstName} ${r.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
+            tenantId: r.tenantId,
             unit: r.unit.name,
+            unitId: r.unitId,
             amount: parseFloat(r.amount),
             date: r.date.toLocaleDateString('en-GB', {
                 day: '2-digit', month: 'short', year: 'numeric'

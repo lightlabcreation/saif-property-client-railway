@@ -198,8 +198,12 @@ exports.uploadDocument = async (req, res) => {
         // Extract primary link for legacy fields (for Prisma include to work)
         const legacyFields = {};
         parsedLinks.forEach(link => {
+            if (!link.entityType || link.entityId == null) return;
+            
             const entityType = link.entityType.toUpperCase();
             const entityId = parseInt(link.entityId);
+            
+            if (isNaN(entityId)) return;
 
             if (entityType === 'USER' && !legacyFields.userId) {
                 legacyFields.userId = entityId;
@@ -236,6 +240,30 @@ exports.uploadDocument = async (req, res) => {
     }
 };
 
+// PUT /api/admin/documents/:id
+exports.updateDocument = async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const { type, name, expiryDate, links } = req.body;
+
+        let parsedLinks = [];
+        try { parsedLinks = Array.isArray(links) ? links : (links ? JSON.parse(links) : []); } 
+        catch (e) { console.error('Link parse error:', e); }
+
+        const updated = await documentService.updateDocument(id, {
+            type,
+            name,
+            expiryDate,
+            links: parsedLinks
+        });
+
+        res.json(updated);
+    } catch (e) {
+        console.error('Update Error:', e);
+        res.status(500).json({ message: 'Failed to update document' });
+    }
+};
+
 // DELETE /api/admin/documents/:id
 exports.deleteDocument = async (req, res) => {
     try {
@@ -269,17 +297,17 @@ exports.downloadProofFromUrl = async (req, res) => {
             method: 'GET',
             url: url,
             responseType: 'stream',
-            timeout: 15000
+            timeout: 20000 // Extended timeout for large or remote files
         });
 
-        // FORCE A CLEAN NAME - Kill the 'tmp-' once and for all
+        const disposition = req.query.disposition || 'attachment';
         const contentType = response.headers['content-type'] || 'application/pdf';
         const isImage = contentType.startsWith('image/');
         const extension = isImage ? `.${contentType.split('/')[1]}` : '.pdf';
         const timeStamp = new Date().toISOString().split('T')[0];
         const fileName = `Proof-Document-${timeStamp}${extension}`;
         
-        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        res.setHeader('Content-Disposition', `${disposition}; filename="${fileName}"`);
         res.setHeader('Content-Type', contentType);
 
         response.data.pipe(res);

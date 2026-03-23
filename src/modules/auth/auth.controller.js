@@ -22,6 +22,13 @@ exports.login = async (req, res) => {
             return res.status(401).json({ message: 'Invalid credentials' });
         }
 
+        // Check if account is active
+        if (user.isActive === false) {
+            return res.status(403).json({ 
+                message: 'Your account has been disabled. Please contact your property administrator.' 
+            });
+        }
+
         // Tenant/Owner may have no password set until they use the invite link
         if (!user.password || user.password.trim() === '') {
             return res.status(401).json({
@@ -173,11 +180,15 @@ exports.updateProfile = async (req, res) => {
         if (name) updateData.name = name;
         if (firstName) updateData.firstName = firstName;
         if (lastName) updateData.lastName = lastName;
-        if (city !== undefined) updateData.city = city;
-        if (state !== undefined) updateData.state = state;
-        if (country !== undefined) updateData.country = country;
-        if (req.body.companyName !== undefined) updateData.companyName = req.body.companyName;
-        if (req.body.companyDetails !== undefined) updateData.companyDetails = req.body.companyDetails;
+
+        // Only ADMIN can change location and company details
+        if (req.user.role === 'ADMIN') {
+            if (city !== undefined) updateData.city = city;
+            if (state !== undefined) updateData.state = state;
+            if (country !== undefined) updateData.country = country;
+            if (req.body.companyName !== undefined) updateData.companyName = req.body.companyName;
+            if (req.body.companyDetails !== undefined) updateData.companyDetails = req.body.companyDetails;
+        }
 
         if (phone) {
             const digits = phone.replace(/\D/g, '');

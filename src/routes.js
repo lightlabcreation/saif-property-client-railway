@@ -20,14 +20,20 @@ const ownerRoutes = require('./modules/owner/owner.routes');
 
 const tenantPortalRoutes = require('./modules/tenant/tenant.portal.routes');
 
+const { authenticate } = require('./middlewares/auth.middleware');
+const { checkPermission } = require('./middlewares/permission.middleware');
+
 router.use('/auth', authRoutes);
-router.use('/admin/tenants', tenantRoutes);
-router.use('/admin/leases', leaseRoutes);
-router.use('/admin/units', unitRoutes);
-router.use('/admin/vehicles', vehicleRoutes);
-router.use('/admin', adminRoutes);
-router.use('/owner', ownerRoutes);
-router.use('/tenant', tenantPortalRoutes);
-router.use('/communication', require('./modules/communication/communication.routes'));
+
+// Protected Admin Routes
+router.use('/admin/tenants', authenticate, tenantRoutes);
+router.use('/admin/leases', authenticate, leaseRoutes);
+router.use('/admin/units', authenticate, unitRoutes);
+router.use('/admin/vehicles', authenticate, vehicleRoutes);
+router.use('/admin', authenticate, adminRoutes);
+
+router.use('/owner', authenticate, ownerRoutes);
+router.use('/tenant', authenticate, tenantPortalRoutes);
+router.use('/communication', authenticate, require('./modules/communication/communication.routes'));
 
 module.exports = router;
