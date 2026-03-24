@@ -10,12 +10,17 @@ class EmailService {
      * Send an email using SendGrid
      * @param {string} to - Recipient email address
      * @param {string} subject - Email subject
-     * @param {string} text - Email body (plain text)
-     * @param {object} [options] - Optional. { eventType } for log entry (default: TENANT_CREATION_CREDENTIALS)
+     * @param {string} content - Email body (HTML or plain text)
+     * @param {object} [options] - Optional. { eventType, templateId, attachments, isHtml = true, recipientId }
      * @returns {Promise<object>} - SendGrid response or error
      */
-    static async sendEmail(to, subject, text, options = {}) {
-        const eventType = options.eventType || 'TENANT_CREATION_CREDENTIALS';
+    static async sendEmail(to, subject, content, options = {}) {
+        const eventType = options.eventType || 'MANUAL_EMAIL';
+        const isHtml = options.isHtml !== false;
+        const recipientId = options.recipientId || null;
+        const templateId = options.templateId || null;
+        const attachments = options.attachments || []; // [{ content, filename, type }]
+
         if (!process.env.SENDGRID_API_KEY) {
             console.error('[EmailService] SENDGRID_API_KEY is not defined in .env');
             return { success: false, error: 'API Key missing' };
@@ -23,16 +28,19 @@ class EmailService {
 
         try {
             // Fetch sender name from SystemSettings if exists
-            const settings = await prisma.systemSetting.findMany({
-                where: {
-                    key: 'EMAIL_SENDER_NAME'
-                }
+            const settings = await prisma.systemSetting.findUnique({
+                where: { key: 'EMAIL_SENDER_NAME' }
+            });
+            const signatureSetting = await prisma.systemSetting.findUnique({
+                where: { key: 'GLOBAL_EMAIL_SIGNATURE' }
             });
 
-            const senderName = settings.length > 0 ? settings[0].value : 'Campus Habitations';
+            const senderName = settings ? settings.value : 'Campus Habitations';
             const fromEmail = process.env.SENDGRID_SENDER_EMAIL || 'Administration@campushabitations.com';
+            const globalSignature = (signatureSetting && !options.skipSignature) ? signatureSetting.value : '';
 
-            console.log(`[EmailService] Attempting to send email to ${to}...`);
+            // Append signature if it's HTML and not skipped
+            const finalBody = isHtml ? `${content}${globalSignature ? `<br/><br/>${globalSignature}` : ''}` : `${content}${globalSignature ? `\n\n${globalSignature.replace(/<[^>]*>?/gm, '')}` : ''}`;
 
             const data = {
                 personalizations: [{
@@ -44,10 +52,19 @@ class EmailService {
                 },
                 subject: subject,
                 content: [{
-                    type: 'text/plain',
-                    value: text
+                    type: isHtml ? 'text/html' : 'text/plain',
+                    value: finalBody
                 }]
             };
+
+            if (attachments.length > 0) {
+                data.attachments = attachments.map(att => ({
+                    content: att.content, // base64
+                    filename: att.filename,
+                    type: att.type,
+                    disposition: 'attachment'
+                }));
+            }
 
             const response = await axios.post('https://api.sendgrid.com/v3/mail/send', data, {
                 headers: {
@@ -56,21 +73,34 @@ class EmailService {
                 }
             });
 
-            console.log(`[EmailService] Email sent successfully to ${to}. Status: ${response.status}`);
+            // Log to CommunicationLog
+            const logEntry = await prisma.communicationLog.create({
+                data: {
+                    channel: 'Email',
+                    eventType,
+                    recipient: to,
+                    recipientId: recipientId ? parseInt(recipientId) : null,
+                    subject: subject,
+                    content: finalBody,
+                    status: 'Sent',
+                    templateId: templateId ? parseInt(templateId) : null,
+                    hasAttachments: attachments.length > 0,
+                    relatedEntity: options.buildingId ? 'Property' : null,
+                    entityId: options.buildingId ? parseInt(options.buildingId) : null
+                }
+            });
 
-            // Log to CommunicationLog if possible (optional but good for consistency)
-            try {
-                await prisma.communicationLog.create({
-                    data: {
-                        channel: 'Email',
-                        eventType,
-                        recipient: to,
-                        content: `Subject: ${subject} | Body: ${text}`,
-                        status: 'Sent'
-                    }
-                });
-            } catch (logError) {
-                console.error('[EmailService] Error logging communication:', logError.message);
+            // If there are specific document IDs, link them to the log for "history viewing"
+            if (options.attachmentIds && options.attachmentIds.length > 0) {
+                await Promise.all(options.attachmentIds.map(docId => 
+                    prisma.documentLink.create({
+                        data: {
+                            documentId: parseInt(docId),
+                            entityType: 'CommunicationLog',
+                            entityId: logEntry.id
+                        }
+                    })
+                ));
             }
 
             return { success: true, status: response.status };
@@ -84,9 +114,12 @@ class EmailService {
                         channel: 'Email',
                         eventType,
                         recipient: to,
-                        content: `Subject: ${subject} | Body: ${text}`,
+                        recipientId: recipientId ? parseInt(recipientId) : null,
+                        subject: subject,
+                        content: content,
                         status: 'Failed',
-                        timestamp: new Date()
+                        templateId: templateId ? parseInt(templateId) : null,
+                        hasAttachments: attachments.length > 0
                     }
                 });
             } catch (logError) {

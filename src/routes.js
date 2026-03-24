@@ -30,6 +30,7 @@ router.use('/admin/tenants', authenticate, tenantRoutes);
 router.use('/admin/leases', authenticate, leaseRoutes);
 router.use('/admin/units', authenticate, unitRoutes);
 router.use('/admin/vehicles', authenticate, vehicleRoutes);
+router.use('/admin/email', authenticate, require('./modules/email/email.routes'));
 router.use('/admin', authenticate, adminRoutes);
 
 router.use('/owner', authenticate, ownerRoutes);

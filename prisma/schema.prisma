@@ -56,7 +56,11 @@ model User {
   isInvited         Boolean            @default(false)
   isActive          Boolean            @default(true)
   permissions       Permission[]
+  unit              Unit?              @relation(fields: [unitId], references: [id])
+  building          Property?          @relation("BuildingTenants", fields: [buildingId], references: [id])
 
+  @@index([unitId], map: "user_unitId_fkey")
+  @@index([buildingId], map: "user_buildingId_fkey")
   @@index([leaseId], map: "user_leaseId_fkey")
   @@index([parentId], map: "user_parentId_fkey")
   @@index([companyId], map: "user_companyId_fkey")
@@ -120,6 +124,7 @@ model Property {
   documents        Document[]
   maintenanceTasks MaintenanceTask[]
   owners           User[]            @relation("ownerproperties")
+  tenants          User[]            @relation("BuildingTenants")
   company          Company?          @relation("CompanyProperties", fields: [companyId], references: [id])
   units            Unit[]
 
@@ -146,6 +151,7 @@ model Unit {
   invoices          Invoice[]
   leases            Lease[]
   refundAdjustments RefundAdjustment[]
+  users             User[]
   property          Property           @relation(fields: [propertyId], references: [id], map: "Unit_propertyId_fkey")
 
   @@index([propertyId], map: "Unit_propertyId_fkey")
@@ -236,21 +242,24 @@ model Document {
   updatedAt     DateTime       @updatedAt
   invoiceId     Int?
   leaseId       Int?
-  propertyId    Int?
-  unitId        Int?
-  user          User?          @relation(fields: [userId], references: [id], map: "Document_userId_fkey")
-  invoice       Invoice?       @relation(fields: [invoiceId], references: [id])
-  lease         Lease?         @relation(fields: [leaseId], references: [id])
-  property      Property?      @relation(fields: [propertyId], references: [id])
-  unit          Unit?          @relation(fields: [unitId], references: [id])
-  links         DocumentLink[]
-  insuranceDocs Insurance[]    @relation("InsuranceDocument")
+  propertyId      Int?
+  unitId          Int?
+  emailTemplateId Int?
+  user            User?          @relation(fields: [userId], references: [id], map: "Document_userId_fkey")
+  invoice         Invoice?       @relation(fields: [invoiceId], references: [id])
+  lease           Lease?         @relation(fields: [leaseId], references: [id])
+  property        Property?      @relation(fields: [propertyId], references: [id])
+  unit            Unit?          @relation(fields: [unitId], references: [id])
+  emailTemplate   EmailTemplate? @relation(fields: [emailTemplateId], references: [id])
+  links           DocumentLink[]
+  insuranceDocs   Insurance[]    @relation("InsuranceDocument")
 
   @@index([userId], map: "Document_userId_fkey")
   @@index([invoiceId], map: "document_invoiceId_fkey")
   @@index([leaseId], map: "document_leaseId_fkey")
   @@index([propertyId], map: "document_propertyId_fkey")
   @@index([unitId], map: "document_unitId_fkey")
+  @@index([emailTemplateId], map: "document_emailTemplateId_fkey")
   @@map("document")
 }
 
@@ -265,20 +274,40 @@ model DocumentLink {
   @@map("documentlink")
 }
 
+model EmailTemplate {
+  id          Int      @id @default(autoincrement())
+  name        String
+  subject     String
+  body        String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  communicationLogs CommunicationLog[]
+  documents         Document[]
+
+  @@map("emailtemplate")
+}
+
 model CommunicationLog {
-  id            Int      @id @default(autoincrement())
-  channel       String
-  eventType     String
-  recipient     String
-  recipientId   Int?
-  relatedEntity String?
-  entityId      Int?
-  content       String?  @db.Text
-  status        String   @default("Sent")
-  timestamp     DateTime @default(now())
-  recipientUser User?    @relation(fields: [recipientId], references: [id])
+  id             Int      @id @default(autoincrement())
+  channel        String
+  eventType      String
+  recipient      String
+  recipientId    Int?
+  relatedEntity  String?
+  entityId       Int?
+  content        String?  @db.Text
+  subject        String?
+  status         String   @default("Sent")
+  hasAttachments Boolean  @default(false)
+  templateId     Int?
+  timestamp      DateTime @default(now())
+  deliveredAt    DateTime?
+  openedAt       DateTime?
+  recipientUser  User?    @relation(fields: [recipientId], references: [id])
+  emailTemplate  EmailTemplate? @relation(fields: [templateId], references: [id])
 
   @@index([recipientId], map: "communicationlog_recipientId_fkey")
+  @@index([templateId], map: "communicationlog_templateId_fkey")
   @@map("communicationlog")
 }
 

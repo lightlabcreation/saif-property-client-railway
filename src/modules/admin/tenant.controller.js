@@ -80,6 +80,8 @@ exports.getAllTenants = async (req, res) => {
             prisma.user.findMany({
                 where: whereClause,
                 include: {
+                    building: true,
+                    unit: { include: { property: true } },
                     leases: {
                         where: { status: { in: ['Active', 'DRAFT'] } },
                         include: {
@@ -158,8 +160,9 @@ exports.getAllTenants = async (req, res) => {
                 (t.residentLease?.status === 'DRAFT' ? t.residentLease : null);
 
             // If no lease, check if they are a resident assigned to a unit
-            let propName = activeLease?.unit?.property?.name || 'No Property';
-            let uName = activeLease?.unit?.name || 'No Unit';
+            // Find property name from any available source
+            let propName = t.building?.name || t.unit?.property?.name || activeLease?.unit?.property?.name || 'No Property';
+            let uName = t.unit?.unitNumber || t.unit?.name || activeLease?.unit?.name || 'No Unit';
             let lStatus = activeLease ? activeLease.status : 'Inactive';
 
             if (t.type === 'RESIDENT' && t.unitId) {
@@ -192,7 +195,7 @@ exports.getAllTenants = async (req, res) => {
                 companyName: t.companyName,
                 email: t.email,
                 phone: t.phone,
-                propertyId: activeLease?.unit?.propertyId || t.buildingId || null,
+                propertyId: t.buildingId || t.unit?.propertyId || activeLease?.unit?.propertyId || (t.type === 'RESIDENT' && t.unitId ? unitMap.get(t.unitId)?.propertyId : null),
                 unitId: activeLease?.unitId || t.unitId || null,
                 leaseId: activeLease?.id || null,
                 bedroomId: activeLease?.bedroomId || t.bedroomId || null,
@@ -205,6 +208,7 @@ exports.getAllTenants = async (req, res) => {
                 rentAmount: activeLease?.monthlyRent || 0,
                 insurance: t.insurances,
                 documents: t.documents,
+                leases: t.leases, // TargetLintErrorIds
                 parentId: t.parentId,
                 parentName: t.parent ? t.parent.name || `${t.parent.firstName || ''} ${t.parent.lastName || ''}`.trim() : null,
                 hasPortalAccess: !!t.password,

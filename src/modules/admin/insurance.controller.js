@@ -25,20 +25,17 @@ exports.getComplianceDashboard = async (req, res) => {
         const formatted = [];
 
         tenants.forEach(tenant => {
-            // Figure out the active lease/unit
-            const activeLease = tenant.leases?.[0] || tenant.residentLease;
-            const propertyName = activeLease?.unit?.property?.name || 'N/A';
-            const unitName = activeLease?.unit?.unitNumber || activeLease?.unit?.name || 'N/A';
             const tenantNameStr = tenant.name || `${tenant.firstName || ''} ${tenant.lastName || ''}`.trim();
+            const activeLeases = tenant.leases && tenant.leases.length > 0 ? tenant.leases : (tenant.residentLease ? [tenant.residentLease] : []);
 
-            if (!tenant.insurances || tenant.insurances.length === 0) {
-                // Return explicitly missing
+            if (activeLeases.length === 0) {
+                // Return explicitly missing for tenants without a unit/lease assigned yet
                 formatted.push({
                     tenantId: tenant.id,
                     tenantName: tenantNameStr,
                     tenantType: tenant.type,
-                    building: propertyName,
-                    unitNumber: unitName,
+                    building: 'N/A',
+                    unitNumber: 'N/A',
                     status: 'MISSING',
                     daysRemaining: null,
                     provider: 'N/A',
@@ -47,51 +44,72 @@ exports.getComplianceDashboard = async (req, res) => {
                     expiryDate: 'N/A',
                     notes: '',
                     insuranceId: null,
-                    unitId: activeLease?.unit?.id || null,
-                    leaseId: activeLease?.id || null,
+                    unitId: null,
+                    leaseId: null,
                     documentUrl: null,
                     uploadedDocumentId: null
                 });
-            } else {
-                let hasActiveOrExpiring = false;
-                
-                tenant.insurances.forEach(insurance => {
-                    if (['ACTIVE', 'EXPIRING_SOON'].includes(insurance.status)) {
-                        hasActiveOrExpiring = true;
-                    }
+                return;
+            }
 
-                    const today = new Date();
-                    today.setHours(0,0,0,0);
-                    const end = new Date(insurance.endDate);
-                    const daysRemaining = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
+            activeLeases.forEach(lease => {
+                const propertyName = lease?.unit?.property?.name || 'N/A';
+                const unitName = lease?.unit?.unitNumber || lease?.unit?.name || 'N/A';
+                const unitId = lease?.unit?.id || null;
+                const leaseId = lease?.id || null;
 
+                // Find insurance for THIS unit/lease specifically if possible
+                const matchingInsurances = tenant.insurances.filter(ins => ins.unitId === unitId);
+
+                if (matchingInsurances.length === 0) {
                     formatted.push({
                         tenantId: tenant.id,
                         tenantName: tenantNameStr,
                         tenantType: tenant.type,
                         building: propertyName,
                         unitNumber: unitName,
-                        status: insurance.status,
-                        daysRemaining,
-                        provider: insurance.provider || 'N/A',
-                        policyNumber: insurance.policyNumber || 'N/A',
-                        startDate: insurance.startDate ? insurance.startDate.toISOString().split('T')[0] : 'N/A',
-                        expiryDate: insurance.endDate ? insurance.endDate.toISOString().split('T')[0] : 'N/A',
-                        notes: insurance.notes || '',
-                        insuranceId: insurance.id,
-                        unitId: activeLease?.unit?.id || null,
-                        leaseId: activeLease?.id || null,
-                        documentUrl: insurance.documentUrl || null,
-                        uploadedDocumentId: insurance.uploadedDocumentId || null
+                        status: 'MISSING',
+                        daysRemaining: null,
+                        provider: 'N/A',
+                        policyNumber: 'N/A',
+                        startDate: 'N/A',
+                        expiryDate: 'N/A',
+                        notes: '',
+                        insuranceId: null,
+                        unitId,
+                        leaseId,
+                        documentUrl: null,
+                        uploadedDocumentId: null
                     });
-                });
+                } else {
+                    matchingInsurances.forEach(insurance => {
+                        const today = new Date();
+                        today.setHours(0,0,0,0);
+                        const end = new Date(insurance.endDate);
+                        const daysRemaining = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
 
-                if (!hasActiveOrExpiring) {
-                    // Force a MISSING row to track compliance if they only have ARCHIVED or EXPIRED stuff
-                    // Wait, if they have an EXPIRED policy, they still aren't strictly compliant, but we already track the "EXPIRED" row so that shows up.
-                    // The frontend stats explicitly count missing. To prevent missing row duplication, we only inject a MISSING row if there's no ACTIVE/EXPIRING_SOON/EXPIRED at all, but they already had records map over.
+                        formatted.push({
+                            tenantId: tenant.id,
+                            tenantName: tenantNameStr,
+                            tenantType: tenant.type,
+                            building: propertyName,
+                            unitNumber: unitName,
+                            status: insurance.status,
+                            daysRemaining,
+                            provider: insurance.provider || 'N/A',
+                            policyNumber: insurance.policyNumber || 'N/A',
+                            startDate: insurance.startDate ? insurance.startDate.toISOString().split('T')[0] : 'N/A',
+                            expiryDate: insurance.endDate ? insurance.endDate.toISOString().split('T')[0] : 'N/A',
+                            notes: insurance.notes || '',
+                            insuranceId: insurance.id,
+                            unitId,
+                            leaseId,
+                            documentUrl: insurance.documentUrl || null,
+                            uploadedDocumentId: insurance.uploadedDocumentId || null
+                        });
+                    });
                 }
-            }
+            });
         });
 
         res.json(formatted);
@@ -330,8 +348,13 @@ exports.createInsurance = async (req, res) => {
 
         // Archive previous active records in transaction
         const result = await prisma.$transaction(async (tx) => {
+            // Find records for the SAME unitId to avoid cross-unit archiving
             await tx.insurance.updateMany({
-                where: { userId: data.userId, status: { in: ['ACTIVE', 'EXPIRING_SOON'] } },
+                where: { 
+                    userId: data.userId, 
+                    unitId: data.unitId,
+                    status: { in: ['ACTIVE', 'EXPIRING_SOON'] } 
+                },
                 data: { status: 'ARCHIVED' }
             });
             return await tx.insurance.create({ data });

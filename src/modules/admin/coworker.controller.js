@@ -256,24 +256,27 @@ exports.sendInvitation = async (req, res) => {
             where: { id: parseInt(id) }
         });
 
-        // Send the invitation via Email and SMS
-        const inviteLink = `${process.env.INVITE_FRONT_URL || 'http://localhost:5173'}/invite?token=${inviteToken}`;
+        // Send the invitation via Email only
+        const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const inviteLink = `${baseUrl}/invite?token=${inviteToken}`;
         const welcomeMsg = `Hello ${coworker.name || 'Team Member'},\n\nYou've been invited to join the Property Management system.\n\nStart here: ${inviteLink}`;
 
-        const results = { email: false, sms: false };
-
-        if (coworker.email) {
-            const eRes = await emailService.sendEmail(coworker.email, 'Team Invitation', welcomeMsg);
-            results.email = eRes.success;
+        if (!coworker.email) {
+            return res.status(400).json({ message: 'Coworker email is missing' });
         }
 
-        if (coworker.phone) {
-            const sRes = await smsService.sendSMS(coworker.phone, welcomeMsg);
-            results.sms = sRes.success;
+        const eRes = await emailService.sendEmail(coworker.email, 'Team Invitation', welcomeMsg);
+        
+        if (!eRes.success) {
+            console.error('Email failed to send:', eRes.error);
+            return res.status(500).json({ 
+                message: 'Failed to send invitation email. Please check email configuration.',
+                error: eRes.error 
+            });
         }
 
         res.json({ 
-            message: 'Invitation sent successfully', 
+            message: 'Invitation sent successfully via email', 
             status: 'Invited'
         });
     } catch (error) {
