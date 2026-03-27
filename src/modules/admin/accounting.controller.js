@@ -5,18 +5,31 @@ exports.getTransactions = async (req, res) => {
     try {
         const txs = await prisma.transaction.findMany({
             orderBy: { date: 'desc' },
-            take: 50
+            take: 100,
+            include: {
+                invoice: { select: { tenant: { select: { name: true } } } },
+                payment: { include: { invoice: { select: { tenant: { select: { name: true } } } } } }
+            }
         });
 
-        const formatted = txs.map(t => ({
-            id: t.id,
-            date: t.date.toISOString().split('T')[0],
-            description: t.description,
-            type: t.type,
-            amount: parseFloat(t.amount),
-            balance: parseFloat(t.balance),
-            status: t.status
-        }));
+        const formatted = txs.map(t => {
+            // Priority: Payment Tenant > Invoice Tenant > Description fallback
+            const tenantName = 
+                t.payment?.invoice?.tenant?.name || 
+                t.invoice?.tenant?.name || 
+                "Administrative";
+
+            return {
+                id: t.id,
+                date: t.date.toISOString().split('T')[0],
+                tenant: tenantName,
+                description: t.description,
+                type: t.type,
+                amount: parseFloat(t.amount),
+                balance: parseFloat(t.balance),
+                status: t.status
+            };
+        });
 
         res.json(formatted);
     } catch (e) {

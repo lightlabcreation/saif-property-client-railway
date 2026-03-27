@@ -43,20 +43,44 @@ exports.getRefunds = async (req, res) => {
 // POST /api/admin/refunds
 exports.createRefund = async (req, res) => {
     try {
-        const { type, reason, tenantId, unitId, amount, status, date, issuedDate, method, referenceNumber, proofUrl, outcomeReason } = req.body;
+        const { type, reason, tenantId, unitId, amount, status, date, issuedDate, method, referenceNumber, proofUrl, outcomeReason, allocations } = req.body;
 
         const result = await prisma.$transaction(async (tx) => {
+            // 1. Concurrency Check: Verify deposit balance hasn't been used yet
+            const depositInvoices = await tx.invoice.findMany({
+                where: {
+                    tenantId: parseInt(tenantId),
+                    status: 'paid',
+                    OR: [
+                        { category: 'SECURITY_DEPOSIT' },
+                        { description: { contains: 'Security Deposit' } }
+                    ]
+                }
+            });
+            const totalDepositPaid = depositInvoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount || 0), 0);
+            
+            const existingRefunds = await tx.refundAdjustment.findMany({
+                where: {
+                    tenantId: parseInt(tenantId),
+                    status: { in: ['Completed', 'Issued'] }
+                }
+            });
+            const totalRefundedAlready = existingRefunds.reduce((sum, r) => sum + parseFloat(r.amount || 0), 0);
+            const availableDeposit = Math.max(0, totalDepositPaid - totalRefundedAlready);
+
+            const requestedAmount = parseFloat(amount) || 0;
+            if (requestedAmount > availableDeposit) {
+                throw new Error(`Insufficient deposit balance. Available: $${availableDeposit}`);
+            }
+
+            // 2. Generate Request ID
             const count = await tx.refundAdjustment.count();
             const requestId = `RA-${String(count + 1).padStart(5, '0')}`;
 
-            const refundamt = parseFloat(amount) || 0;
-
-            // Auto-manage issuedDate based on status
+            // 3. Create Refund Adjustment Record
             let finalIssuedDate = issuedDate ? new Date(issuedDate) : null;
             if (status === 'Completed' && !finalIssuedDate) {
-                finalIssuedDate = new Date(); // Default to today if completed
-            } else if (status === 'Pending') {
-                finalIssuedDate = null; // Clear if pending
+                finalIssuedDate = new Date();
             }
 
             const refund = await tx.refundAdjustment.create({
@@ -66,23 +90,97 @@ exports.createRefund = async (req, res) => {
                     reason,
                     tenantId: parseInt(tenantId),
                     unitId: parseInt(unitId),
-                    amount: refundamt,
+                    amount: requestedAmount,
                     status: status || 'Pending',
                     date: date ? new Date(date) : new Date(),
                     issuedDate: finalIssuedDate,
                     method: method || null,
                     referenceNumber: referenceNumber || null,
                     proofUrl: proofUrl || null,
-                    outcomeReason: outcomeReason || 'Pending review'
+                    outcomeReason: outcomeReason || 'Pending review',
+                    createdBy: req.user?.id || 1
                 }
             });
 
-            // Notification for Security Deposit (Requirement from user)
+            // 4. Process Allocations (Deductions) if Status is Completed
+            if (status === 'Completed' && allocations && Array.isArray(allocations)) {
+                for (const allocation of allocations) {
+                    const invoice = await tx.invoice.findUnique({ where: { id: allocation.invoiceId } });
+                    if (!invoice) continue;
+
+                    const allocAmount = parseFloat(allocation.amount);
+                    const newPaidAmount = parseFloat(invoice.paidAmount) + allocAmount;
+                    const newBalanceDue = Math.max(0, parseFloat(invoice.amount) - newPaidAmount);
+
+                    // Update Invoice
+                    await tx.invoice.update({
+                        where: { id: invoice.id },
+                        data: {
+                            paidAmount: newPaidAmount,
+                            balanceDue: newBalanceDue,
+                            status: newBalanceDue <= 0 ? 'paid' : 'partial',
+                            paidAt: newBalanceDue <= 0 ? new Date() : undefined
+                        }
+                    });
+
+                    // Create Payment Record
+                    await tx.payment.create({
+                        data: {
+                            invoiceId: invoice.id,
+                            amount: allocAmount,
+                            method: 'Security Deposit Allocation',
+                            reference: requestId,
+                            date: new Date()
+                        }
+                    });
+
+                    // Accounting Ledger: Dr Liability, Cr Income
+                    const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
+                    const prevBalance = lastTx ? parseFloat(lastTx.balance) : 0;
+                    
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(),
+                            description: `SD Allocation: ${invoice.invoiceNo} (${invoice.category})`,
+                            type: 'Liability Deduction',
+                            amount: allocAmount,
+                            balance: prevBalance - allocAmount,
+                            status: 'Completed',
+                            invoiceId: invoice.id
+                        }
+                    });
+                }
+            }
+
+            // 5. Final Ledger for Cash Refund if applicable
+            if (status === 'Completed' && type.toLowerCase().includes('refund')) {
+                // If there's still a net amount being physically refunded
+                const totalAllocated = (allocations || []).reduce((sum, a) => sum + parseFloat(a.amount), 0);
+                const cashRefunded = requestedAmount - totalAllocated;
+
+                if (cashRefunded > 0) {
+                    const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
+                    const prevBalance = lastTx ? parseFloat(lastTx.balance) : 0;
+
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(),
+                            description: `Security Deposit Cash Refund - ${requestId}`,
+                            type: 'Liability Refund',
+                            amount: cashRefunded,
+                            balance: prevBalance - cashRefunded,
+                            status: 'Completed'
+                        }
+                    });
+                }
+            }
+
+            // Notification for Security Deposit
             if (type.toLowerCase().includes('deposit') || reason.toLowerCase().includes('deposit')) {
                 await tx.message.create({
                     data: {
-                        content: `Notification: A ${type} of $${refundamt} has been processed for your account. Reason: ${reason}`,
-                        senderId: req.user?.id || 1, // Fallback to 1 (Admin) if auth middleware is off
+                        content: `Notification: A ${type} of $${requestedAmount} has been processed for your account. Reason: ${reason}`,
+                        senderId: req.user?.id || 1,
                         receiverId: parseInt(tenantId)
                     }
                 });
@@ -94,7 +192,7 @@ exports.createRefund = async (req, res) => {
         res.status(201).json(result);
     } catch (e) {
         console.error(e);
-        res.status(500).json({ message: 'Error creating refund' });
+        res.status(500).json({ message: 'Error creating refund: ' + e.message });
     }
 };
 
@@ -110,6 +208,11 @@ exports.updateRefund = async (req, res) => {
             });
 
             if (!current) throw new Error('Refund not found');
+
+            // Audit Lock: Prevent silent edits AFTER completion
+            if (current.status === 'Completed' && status !== 'Completed') {
+                throw new Error('Cannot modify or un-post a record that is already marked as Completed.');
+            }
 
             // Smart Date Logic: Auto-populate issuedDate on completion
             let finalIssuedDate = issuedDate ? new Date(issuedDate) : (current.issuedDate || undefined);
@@ -180,6 +283,23 @@ exports.calculateRefund = async (req, res) => {
     try {
         const tenantId = parseInt(req.params.tenantId);
 
+        // Security Guard: Check if lease has actually Ended/Expired
+        const lease = await prisma.lease.findFirst({
+            where: {
+                tenantId,
+                status: { in: ['Expired', 'Ended'] }
+            }
+        });
+
+        if (!lease) {
+            // If no ended lease, we don't permit system-calculated allocations
+            return res.json({ 
+                availableDeposit: 0, 
+                proposedAllocations: [], 
+                message: "System calculation disabled: No Ended/Expired lease found for this tenant." 
+            });
+        }
+
         // 1. Get Paid Security Deposits
         const depositInvoices = await prisma.invoice.findMany({
             where: {
@@ -194,17 +314,7 @@ exports.calculateRefund = async (req, res) => {
 
         const totalDepositPaid = depositInvoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount || 0), 0);
 
-        // 2. Get Service Fee Invoices (Deductions)
-        const serviceInvoices = await prisma.invoice.findMany({
-            where: {
-                tenantId,
-                category: 'SERVICE'
-            }
-        });
-
-        const totalServiceCharges = serviceInvoices.reduce((sum, inv) => sum + parseFloat(inv.amount || 0), 0);
-
-        // 3. Subtract existing refunds already processed
+        // 2. Subtract existing refunds already processed
         const existingRefunds = await prisma.refundAdjustment.findMany({
             where: {
                 tenantId,
@@ -212,17 +322,70 @@ exports.calculateRefund = async (req, res) => {
             }
         });
         const totalRefundedAlready = existingRefunds.reduce((sum, r) => sum + parseFloat(r.amount || 0), 0);
+        const availableDeposit = Math.max(0, totalDepositPaid - totalRefundedAlready);
 
-        // 4. Final Calculation Ratio
-        const finalRefundAmount = Math.max(0, totalDepositPaid - totalServiceCharges - totalRefundedAlready);
+        // 3. Get Outstanding Invoices (Priority: Service first, then Rent)
+        const outstandingInvoices = await prisma.invoice.findMany({
+            where: {
+                tenantId,
+                status: { not: 'paid' },
+                balanceDue: { gt: 0 }
+            },
+            orderBy: [
+                { category: 'desc' }, // SERVICE > RENT if alphabetical (S > R)
+                { dueDate: 'asc' }
+            ]
+        });
+
+        // 4. Perform Priority Allocation Logic
+        let remainingToAllocate = availableDeposit;
+        const proposedAllocations = [];
+
+        // Clear Service Fees first
+        const serviceInvoices = outstandingInvoices.filter(inv => inv.category === 'SERVICE');
+        for (const inv of serviceInvoices) {
+            const balance = parseFloat(inv.balanceDue);
+            const canAlloc = Math.min(remainingToAllocate, balance);
+            if (canAlloc > 0) {
+                proposedAllocations.push({
+                    invoiceId: inv.id,
+                    invoiceNo: inv.invoiceNo,
+                    category: inv.category,
+                    amount: canAlloc,
+                    fullBalance: balance
+                });
+                remainingToAllocate -= canAlloc;
+            }
+        }
+
+        // Clear Rent next
+        const rentInvoices = outstandingInvoices.filter(inv => inv.category === 'RENT');
+        for (const inv of rentInvoices) {
+            const balance = parseFloat(inv.balanceDue);
+            const canAlloc = Math.min(remainingToAllocate, balance);
+            if (canAlloc > 0) {
+                proposedAllocations.push({
+                    invoiceId: inv.id,
+                    invoiceNo: inv.invoiceNo,
+                    category: inv.category,
+                    amount: canAlloc,
+                    fullBalance: balance
+                });
+                remainingToAllocate -= canAlloc;
+            }
+        }
+
+        const totalDeductions = proposedAllocations.reduce((sum, a) => sum + a.amount, 0);
+        const finalRefundAmount = remainingToAllocate; // Priority 3: Refund the rest
 
         res.json({
             tenantId,
             totalDepositPaid,
-            totalServiceCharges,
             totalRefundedAlready,
+            availableDeposit,
+            totalDeductions,
             finalRefundAmount,
-            appliedServiceInvoices: serviceInvoices.map(inv => ({ invoiceNo: inv.invoiceNo, amount: parseFloat(inv.amount) }))
+            proposedAllocations
         });
 
     } catch (e) {
