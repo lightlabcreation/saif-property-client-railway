@@ -1,5 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require("../../config/prisma");
 
 /**
  * Twilio Webhook Handler for Incoming SMS
@@ -79,7 +78,9 @@ exports.handleIncomingSMS = async (req, res) => {
                 isRead: false,
                 smsSid: MessageSid,
                 smsStatus: 'received',
-                sentVia: 'sms' // Incoming is always via SMS
+                sentVia: 'sms', // Incoming is always via SMS
+                direction: 'INBOUND',
+                isReadByAdmin: false
             }
         });
 

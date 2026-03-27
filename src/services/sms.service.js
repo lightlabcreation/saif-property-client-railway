@@ -1,4 +1,5 @@
 const twilio = require("twilio");
+const prisma = require("../config/prisma");
 
 // Twilio Credentials
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
@@ -68,42 +69,65 @@ exports.sendSMS = async (to, message) => {
 };
 
 /**
- * Send SMS to multiple phone numbers (bulk)
- * @param {Array<string>} recipients - Array of phone numbers (E.164 format)
- * @param {string} message - The message content
- * @returns {Promise<Array>} - Array of results for each recipient
+ * Send SMS to multiple phone numbers with batching and campaign tracking
+ * @param {Array<object>} recipients - Array of user objects
+ * @param {string} templateContent - The raw template content
+ * @param {number} campaignId - The ID of the SMSCampaign record
  */
-exports.sendBulkSMS = async (recipients, message) => {
-    if (!client) {
-        console.error("Twilio client not initialized");
-        return recipients.map(to => ({ to, success: false, message: "Twilio client not initialized" }));
-    }
+exports.processCampaign = async (recipients, templateContent, campaignId) => {
+    let successCount = 0;
+    let failedCount = 0;
 
-    const results = [];
+    // Update status to PROCESSING
+    await prisma.sMSCampaign.update({
+        where: { id: campaignId },
+        data: { status: 'PROCESSING' }
+    });
 
     for (let i = 0; i < recipients.length; i++) {
-        const originalTo = recipients[i];
-        const formattedTo = normalizePhoneNumber(originalTo);
-
-        try {
-            console.log(`Sending bulk SMS ${i + 1}/${recipients.length} to ${formattedTo}...`);
-            const result = await client.messages.create({
-                body: message,
-                from: TWILIO_PHONE_NUMBER,
-                to: formattedTo,
-            });
-            console.log(`SMS sent successfully to ${formattedTo}. SID: ${result.sid}`);
-            results.push({ to: originalTo, success: true, sid: result.sid });
-        } catch (error) {
-            console.error(`Error sending SMS to ${formattedTo}:`, error);
-            results.push({ to: originalTo, success: false, error: error.message, code: error.code });
+        const user = recipients[i];
+        if (!user.phone) {
+            failedCount++;
+            continue;
         }
 
-        // Throttle: Wait 1 second between sends to respect Twilio rate limits
+        const personalizedMessage = exports.parseTemplate(templateContent, user);
+        const result = await exports.sendSMS(user.phone, personalizedMessage, { direction: 'OUTBOUND' });
+
+        if (result.success) {
+            successCount++;
+            // Log as a Message for the thread
+            await prisma.message.create({
+                data: {
+                    content: personalizedMessage,
+                    senderId: (await prisma.sMSCampaign.findUnique({ where: { id: campaignId } })).senderId,
+                    receiverId: user.id,
+                    smsSid: result.sid,
+                    smsStatus: result.status,
+                    sentVia: 'sms',
+                    direction: 'OUTBOUND',
+                    isRead: true
+                }
+            });
+        } else {
+            failedCount++;
+        }
+
+        // Periodically update progress (every 5 messages or at the end)
+        if ((i + 1) % 5 === 0 || i === recipients.length - 1) {
+            await prisma.sMSCampaign.update({
+                where: { id: campaignId },
+                data: { 
+                    successCount, 
+                    failedCount,
+                    status: i === recipients.length - 1 ? 'COMPLETED' : 'PROCESSING'
+                }
+            });
+        }
+
+        // Throttle to respect Twilio rate limits (1 second between sends)
         if (i < recipients.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
     }
-
-    return results;
 };

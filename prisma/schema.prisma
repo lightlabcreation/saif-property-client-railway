@@ -58,6 +58,7 @@ model User {
   permissions       Permission[]
   unit              Unit?              @relation(fields: [unitId], references: [id])
   building          Property?          @relation("BuildingTenants", fields: [buildingId], references: [id])
+  preferredLanguage String?            @default("English")
 
   @@index([unitId], map: "user_unitId_fkey")
   @@index([buildingId], map: "user_buildingId_fkey")
@@ -459,6 +460,8 @@ model Message {
   sentVia    String   @default("app") // Channel: app, sms, or both
   receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id], map: "Message_receiverId_fkey")
   sender     User     @relation("SentMessages", fields: [senderId], references: [id], map: "Message_senderId_fkey")
+  isReadByAdmin Boolean  @default(false)
+  direction     String   @default("OUTBOUND")
 
   @@index([receiverId], map: "Message_receiverId_fkey")
   @@index([senderId], map: "Message_senderId_fkey")
@@ -497,6 +500,32 @@ model Account {
   transactions   Transaction[]
 
   @@map("accounts")
+}
+
+model SMSTemplate {
+  id        Int      @id @default(autoincrement())
+  name      String
+  content   String   @db.Text
+  category  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("smstemplate")
+}
+
+model SMSCampaign {
+  id             Int      @id @default(autoincrement())
+  name           String
+  senderId       Int
+  status         String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  totalRecipients Int      @default(0)
+  successCount   Int      @default(0)
+  failedCount    Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  buildingId     Int?
+  
+  @@map("smscampaign")
 }
 
 model RefundAdjustment {

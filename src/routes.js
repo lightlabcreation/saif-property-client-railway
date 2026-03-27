@@ -26,6 +26,12 @@ const { checkPermission } = require('./middlewares/permission.middleware');
 router.use('/auth', authRoutes);
 
 // Protected Admin Routes
+// 🌍 PUBLIC WEBHOOKS (No Authentication Required)
+const twilioWebhookController = require('./modules/communication/twilio.webhook.controller');
+router.post('/communication/webhook/sms/incoming', twilioWebhookController.handleIncomingSMS);
+router.post('/communication/webhook/sms/status', twilioWebhookController.handleSMSStatusCallback);
+
+// 🔒 PROTECTED MODULES
 router.use('/admin/tenants', authenticate, tenantRoutes);
 router.use('/admin/leases', authenticate, leaseRoutes);
 router.use('/admin/units', authenticate, unitRoutes);

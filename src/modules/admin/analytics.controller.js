@@ -162,13 +162,19 @@ exports.getRevenueStats = async (req, res) => {
         // Sort monthly data chronologically
         const monthlyRevenue = Object.keys(monthlyMap)
             .sort(monthSorter)
-            .map(m => ({
-                month: m.split(' ')[0].substring(0, 3) + " '" + m.split(' ')[1].slice(-2), // Custom display format "Mar '26"
-                amount: monthlyMap[m].amount,
-                rent: monthlyMap[m].rent,
-                deposit: monthlyMap[m].deposit,
-                serviceFees: monthlyMap[m].serviceFees
-            }));
+            .map(m => {
+                const parts = m.split(' ');
+                const label = parts.length >= 2 
+                    ? `${parts[0].substring(0, 3)} '${parts[1].slice(-2)}` 
+                    : m; // Fallback to raw string if format is unexpected
+                return {
+                    month: label,
+                    amount: monthlyMap[m].amount,
+                    rent: monthlyMap[m].rent,
+                    deposit: monthlyMap[m].deposit,
+                    serviceFees: monthlyMap[m].serviceFees
+                };
+            });
 
         // Build revenueByProperty with monthly breakdown
         const revenueByProperty = Object.keys(propertyMap).map(p => ({
@@ -179,10 +185,16 @@ exports.getRevenueStats = async (req, res) => {
             serviceFees: propertyMap[p].serviceFees,
             monthly: Object.keys(propertyMap[p].monthly)
                 .sort(monthSorter)
-                .map(m => ({
-                    month: m.split(' ')[0].substring(0, 3) + " '" + m.split(' ')[1].slice(-2),
-                    ...propertyMap[p].monthly[m]
-                }))
+                .map(m => {
+                    const parts = m.split(' ');
+                    const label = parts.length >= 2 
+                        ? `${parts[0].substring(0, 3)} '${parts[1].slice(-2)}` 
+                        : m;
+                    return {
+                        month: label,
+                        ...propertyMap[p].monthly[m]
+                    };
+                })
         }));
 
         res.json({

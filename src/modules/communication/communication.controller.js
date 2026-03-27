@@ -169,7 +169,14 @@ exports.getConversations = async (req, res) => {
                 where: {
                     id: { not: userId },
                     role: { in: ['TENANT', 'OWNER'] },
-                    type: { not: 'RESIDENT' }
+                    type: { not: 'RESIDENT' },
+                    OR: [
+                        { role: 'OWNER' },
+                        { AND: [
+                            { role: 'TENANT' },
+                            { leases: { some: { status: 'Active' } } }
+                        ]}
+                    ]
                 },
                 select: {
                     id: true,
@@ -203,7 +210,10 @@ exports.getConversations = async (req, res) => {
 
             // Fetch all Residents (Occupants)
             const residents = await prisma.user.findMany({
-                where: { type: 'RESIDENT' },
+                where: { 
+                    type: 'RESIDENT',
+                    residentLease: { status: 'Active' }
+                },
                 include: {
                     parent: {
                         select: {

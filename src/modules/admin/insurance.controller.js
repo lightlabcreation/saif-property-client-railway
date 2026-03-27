@@ -4,68 +4,68 @@ const communicationService = require('../../services/communicationService');
 // GET /api/admin/insurance/compliance
 exports.getComplianceDashboard = async (req, res) => {
     try {
-        // Fetch all tenants to ensure we see MISSING ones
-        const tenants = await prisma.user.findMany({
-            where: {
-                role: 'TENANT',
-                type: { not: 'RESIDENT' }
-            },
+        // First, ensure all statuses are up to date
+        await exports.checkInsuranceExpirations();
+
+        // Fetch all active leases with their units, properties, and residents (tenants)
+        const activeLeases = await prisma.lease.findMany({
+            where: { status: 'Active' },
             include: {
-                insurances: {
-                    orderBy: { endDate: 'desc' }
+                unit: { include: { property: true } },
+                tenant: {
+                    include: {
+                        insurances: {
+                            where: { status: { in: ['ACTIVE', 'EXPIRING_SOON', 'EXPIRED'] } },
+                            orderBy: { endDate: 'desc' }
+                        }
+                    }
                 },
-                residentLease: { include: { unit: { include: { property: true } } } },
-                leases: {
-                    where: { status: 'Active' },
-                    include: { unit: { include: { property: true } } }
+                residents: {
+                    include: {
+                        insurances: {
+                            where: { status: { in: ['ACTIVE', 'EXPIRING_SOON', 'EXPIRED'] } },
+                            orderBy: { endDate: 'desc' }
+                        }
+                    }
                 }
             }
         });
 
         const formatted = [];
 
-        tenants.forEach(tenant => {
-            const tenantNameStr = tenant.name || `${tenant.firstName || ''} ${tenant.lastName || ''}`.trim();
-            const activeLeases = tenant.leases && tenant.leases.length > 0 ? tenant.leases : (tenant.residentLease ? [tenant.residentLease] : []);
+        activeLeases.forEach(lease => {
+            const propertyName = lease.unit?.property?.name || 'N/A';
+            const unitName = lease.unit?.unitNumber || lease.unit?.name || 'N/A';
+            const unitId = lease.unit?.id || null;
+            const leaseId = lease.id || null;
 
-            if (activeLeases.length === 0) {
-                // Return explicitly missing for tenants without a unit/lease assigned yet
-                formatted.push({
-                    tenantId: tenant.id,
-                    tenantName: tenantNameStr,
-                    tenantType: tenant.type,
-                    building: 'N/A',
-                    unitNumber: 'N/A',
-                    status: 'MISSING',
-                    daysRemaining: null,
-                    provider: 'N/A',
-                    policyNumber: 'N/A',
-                    startDate: 'N/A',
-                    expiryDate: 'N/A',
-                    notes: '',
-                    insuranceId: null,
-                    unitId: null,
-                    leaseId: null,
-                    documentUrl: null,
-                    uploadedDocumentId: null
-                });
-                return;
+            // Collect all unique residents (primary tenant + additional residents)
+            const rawResidents = [lease.tenant, ...(lease.residents || [])].filter(Boolean);
+            const residentMap = new Map();
+            rawResidents.forEach(r => residentMap.set(r.id, r));
+            const allResidents = Array.from(residentMap.values());
+            
+            // Find all insurance records for this lease across all residents
+            const allInsurances = allResidents.flatMap(r => r.insurances || []);
+            
+            // Filter insurances that are specifically linked to this lease OR this unit
+            let matchingInsurances = allInsurances.filter(ins => ins.leaseId === leaseId || ins.unitId === unitId);
+            
+            // If no specific match, try to find any active/expiring insurance for these residents 
+            // (Shared policy scenario where only one person uploaded it)
+            if (matchingInsurances.length === 0 && allInsurances.length > 0) {
+                // Pick the most recent one as a representative policy if it's generally active
+                matchingInsurances = [allInsurances[0]]; 
             }
 
-            activeLeases.forEach(lease => {
-                const propertyName = lease?.unit?.property?.name || 'N/A';
-                const unitName = lease?.unit?.unitNumber || lease?.unit?.name || 'N/A';
-                const unitId = lease?.unit?.id || null;
-                const leaseId = lease?.id || null;
-
-                // Find insurance for THIS unit/lease specifically if possible
-                const matchingInsurances = tenant.insurances.filter(ins => ins.unitId === unitId);
-
-                if (matchingInsurances.length === 0) {
+            if (matchingInsurances.length === 0) {
+                // For each resident, show as MISSING if no insurance found for the lease
+                allResidents.forEach(resident => {
+                    const residentName = resident.name || `${resident.firstName || ''} ${resident.lastName || ''}`.trim();
                     formatted.push({
-                        tenantId: tenant.id,
-                        tenantName: tenantNameStr,
-                        tenantType: tenant.type,
+                        tenantId: resident.id,
+                        tenantName: residentName,
+                        tenantType: resident.type,
                         building: propertyName,
                         unitNumber: unitName,
                         status: 'MISSING',
@@ -81,35 +81,41 @@ exports.getComplianceDashboard = async (req, res) => {
                         documentUrl: null,
                         uploadedDocumentId: null
                     });
-                } else {
-                    matchingInsurances.forEach(insurance => {
-                        const today = new Date();
-                        today.setHours(0,0,0,0);
-                        const end = new Date(insurance.endDate);
-                        const daysRemaining = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
+                });
+            } else {
+                // We have insurance. We should show the status based on the best available policy for the lease.
+                const statusPriority = { 'ACTIVE': 3, 'EXPIRING_SOON': 2, 'EXPIRED': 1 };
+                matchingInsurances.sort((a,b) => (statusPriority[b.status] || 0) - (statusPriority[a.status] || 0));
+                
+                const bestInsurance = matchingInsurances[0];
+                const today = new Date();
+                today.setHours(0,0,0,0);
+                const end = new Date(bestInsurance.endDate);
+                const daysRemaining = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
 
-                        formatted.push({
-                            tenantId: tenant.id,
-                            tenantName: tenantNameStr,
-                            tenantType: tenant.type,
-                            building: propertyName,
-                            unitNumber: unitName,
-                            status: insurance.status,
-                            daysRemaining,
-                            provider: insurance.provider || 'N/A',
-                            policyNumber: insurance.policyNumber || 'N/A',
-                            startDate: insurance.startDate ? insurance.startDate.toISOString().split('T')[0] : 'N/A',
-                            expiryDate: insurance.endDate ? insurance.endDate.toISOString().split('T')[0] : 'N/A',
-                            notes: insurance.notes || '',
-                            insuranceId: insurance.id,
-                            unitId,
-                            leaseId,
-                            documentUrl: insurance.documentUrl || null,
-                            uploadedDocumentId: insurance.uploadedDocumentId || null
-                        });
+                allResidents.forEach(resident => {
+                    const residentName = resident.name || `${resident.firstName || ''} ${resident.lastName || ''}`.trim();
+                    formatted.push({
+                        tenantId: resident.id,
+                        tenantName: residentName,
+                        tenantType: resident.type,
+                        building: propertyName,
+                        unitNumber: unitName,
+                        status: bestInsurance.status,
+                        daysRemaining,
+                        provider: bestInsurance.provider || 'N/A',
+                        policyNumber: bestInsurance.policyNumber || 'N/A',
+                        startDate: bestInsurance.startDate ? bestInsurance.startDate.toISOString().split('T')[0] : 'N/A',
+                        expiryDate: bestInsurance.endDate ? bestInsurance.endDate.toISOString().split('T')[0] : 'N/A',
+                        notes: bestInsurance.notes || '',
+                        insuranceId: bestInsurance.id,
+                        unitId,
+                        leaseId,
+                        documentUrl: bestInsurance.documentUrl || null,
+                        uploadedDocumentId: bestInsurance.uploadedDocumentId || null
                     });
-                }
-            });
+                });
+            }
         });
 
         res.json(formatted);
@@ -159,7 +165,13 @@ exports.getInsuranceAlerts = async (req, res) => {
     try {
         const { status } = req.query; // Filter by status if provided
 
-        const where = {};
+        const where = {
+            user: {
+                role: 'TENANT',
+                type: { not: 'RESIDENT' },
+                leases: { some: { status: 'Active' } }
+            }
+        };
         if (status) {
             where.status = status;
         }
@@ -277,34 +289,71 @@ exports.rejectInsurance = async (req, res) => {
 // GET /api/admin/insurance/stats
 exports.getInsuranceStats = async (req, res) => {
     try {
-        const today = new Date();
-        const thirtyDaysOut = new Date();
-        thirtyDaysOut.setDate(today.getDate() + 30);
+        // Ensure data is fresh
+        await exports.checkInsuranceExpirations();
 
-        const [missingCount] = await prisma.$queryRaw`
-            SELECT COUNT(u.id) as missing
-            FROM user u
-            WHERE u.role = 'TENANT' 
-            AND u.type != 'RESIDENT'
-            AND NOT EXISTS (
-                SELECT 1 FROM insurance i WHERE i.userId = u.id AND i.status IN ('ACTIVE', 'EXPIRING_SOON')
-            )
-        `;
+        // We count based on active leases
+        const activeLeases = await prisma.lease.findMany({
+            where: { status: 'Active' },
+            include: {
+                tenant: {
+                    include: {
+                        insurances: {
+                            where: { status: { in: ['ACTIVE', 'EXPIRING_SOON', 'EXPIRED'] } }
+                        }
+                    }
+                },
+                residents: {
+                    include: {
+                        insurances: {
+                            where: { status: { in: ['ACTIVE', 'EXPIRING_SOON', 'EXPIRED'] } }
+                        }
+                    }
+                }
+            }
+        });
 
-        const userFilter = { role: 'TENANT', type: { not: 'RESIDENT' } };
-        const [active, expiring, expired, pending] = await Promise.all([
-            prisma.insurance.count({ where: { status: 'ACTIVE', user: userFilter } }),
-            prisma.insurance.count({ where: { status: 'EXPIRING_SOON', user: userFilter } }),
-            prisma.insurance.count({ where: { status: 'EXPIRED', user: userFilter } }),
-            prisma.insurance.count({ where: { status: 'PENDING_APPROVAL', user: userFilter } })
-        ]);
+        let active = 0;
+        let expiring = 0;
+        let expired = 0;
+        let missing = 0;
+        let pending = 0;
+
+        activeLeases.forEach(lease => {
+            const allResidents = [lease.tenant, ...(lease.residents || [])].filter(Boolean);
+            const allInsurances = allResidents.flatMap(r => r.insurances || []);
+            
+            // Check if ANY insurance covers this lease
+            const leaseInsurances = allInsurances.filter(ins => ins.leaseId === lease.id || ins.unitId === lease.unitId);
+            
+            if (leaseInsurances.length === 0 && allInsurances.length > 0) {
+                // If no specific link but resident has insurance, count it (shared policy fallback)
+                leaseInsurances.push(allInsurances[0]);
+            }
+
+            if (leaseInsurances.length === 0) {
+                missing += allResidents.length;
+            } else {
+                // Determine best status for the lease
+                const statuses = leaseInsurances.map(i => i.status);
+                if (statuses.includes('ACTIVE')) {
+                    active += allResidents.length;
+                } else if (statuses.includes('EXPIRING_SOON')) {
+                    expiring += allResidents.length;
+                } else if (statuses.includes('EXPIRED')) {
+                    expired += allResidents.length;
+                } else if (statuses.includes('PENDING_APPROVAL')) {
+                    pending += allResidents.length;
+                }
+            }
+        });
 
         res.json({
             active,
             expiring,
             expired,
             pending,
-            missing: Number(missingCount?.missing || 0)
+            missing
         });
     } catch (e) {
         console.error(e);
