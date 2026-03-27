@@ -37,9 +37,16 @@ exports.handleIncomingSMS = async (req, res) => {
         });
 
         if (!sender) {
-            console.warn(`⚠️ No user found matching the last 10 digits: ${incomingLast10}`);
-            // Log first 3 DB numbers for debugging
-            console.log('Sample DB formats seen:', allUsersWithPhone.slice(0, 3).map(u => `"${u.phone}"`));
+            console.warn(`⚠️ Webhook Match Failed! Incoming Last10: ${incomingLast10}`);
+            // Log all available numbers in memory to see what's actually in the live DB
+            const dbPhones = allUsersWithPhone.map(u => ({
+                id: u.id,
+                name: u.name,
+                raw: u.phone,
+                digits: u.phone.replace(/\D/g, ''),
+                last10: u.phone.replace(/\D/g, '').slice(-10)
+            }));
+            console.log('Full Database Phone Check:', JSON.stringify(dbPhones, null, 2));
             
             res.set('Content-Type', 'text/xml');
             return res.send(`<?xml version="1.0" encoding="UTF-8"?>

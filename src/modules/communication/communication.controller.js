@@ -183,6 +183,7 @@ exports.getConversations = async (req, res) => {
                     name: true,
                     role: true,
                     email: true,
+                    phone: true,
                     type: true,
                     buildingId: true,
                     leases: {
