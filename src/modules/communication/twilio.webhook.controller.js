@@ -15,22 +15,33 @@ exports.handleIncomingSMS = async (req, res) => {
             return res.status(400).send('Missing From number');
         }
 
-        // Clean the incoming phone number (remove +, and get last 10 digits for matching)
-        const cleanFrom = From.replace(/\D/g, '').slice(-10);
+        // Clean the incoming phone number (get digits only)
+        const incomingDigits = From.replace(/\D/g, '');
+        const last10Digits = incomingDigits.slice(-10);
+
+        console.log(`🔍 Searching for user with phone digits containing: ${last10Digits}`);
 
         // Find the user by phone number (sender)
-        // We use 'contains' with the last 10 digits to be robust against different DB formats (+1..., ..., ...)
-        const sender = await prisma.user.findFirst({
+        // Since phone numbers in the DB can have varied formats (+1..., ..., (x) x-x),
+        // we fetch all users with a phone number and match them in memory for robustness.
+        // For a property management app, this is efficient enough.
+        const allUsersWithPhone = await prisma.user.findMany({
             where: {
-                phone: {
-                    contains: cleanFrom
-                }
-            }
+                NOT: { phone: null },
+                phone: { not: '' }
+            },
+            select: { id: true, name: true, phone: true, role: true }
+        });
+
+        const sender = allUsersWithPhone.find(user => {
+            const userDigits = user.phone.replace(/\D/g, '');
+            return userDigits.includes(last10Digits);
         });
 
         if (!sender) {
-            console.warn(`⚠️ No user found with phone number matching: ${cleanFrom} (Original: ${From})`);
-            // Optional: You could log this to a general 'Unknown' inbox if you want
+            console.warn(`⚠️ No user found with phone number matching: ${last10Digits} (Original From: ${From})`);
+            console.log('Available user phone formats in DB:', allUsersWithPhone.slice(0, 3).map(u => u.phone));
+            
             res.set('Content-Type', 'text/xml');
             return res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
