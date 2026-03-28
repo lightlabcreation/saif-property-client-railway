@@ -15,30 +15,33 @@ exports.handleIncomingSMS = async (req, res) => {
             return res.status(400).send('Missing From number');
         }
 
-        // Clean the incoming phone number (remove +, and get last 10 digits for matching)
+        // 2. Find sender by phone number (Prioritize primary roles: Tenant/Owner)
         const cleanFrom = From.replace(/\D/g, '').slice(-10);
+        console.log(`🔍 Webhook Incoming: "${From}" -> Pattern: "%${cleanFrom}"`);
 
-        console.log(`🔍 Webhook Match Logic: Incoming="${From}" -> Last10="${cleanFrom}"`);
-
-        // Find the user by phone number (sender)
-        // We use 'contains' with the last 10 digits to be robust against different DB formats (+1..., ..., ...)
-        const sender = await prisma.user.findFirst({
-            where: {
-                phone: {
-                    contains: cleanFrom
-                }
-            }
+        const users = await prisma.user.findMany({
+            where: { phone: { contains: cleanFrom } },
+            orderBy: [
+                { role: 'asc' },   // Sort roles: ADMIN < COWORKER < OWNER < TENANT (alphabetical)
+                { createdAt: 'desc' }
+            ]
         });
 
+        // Smart Match: Prefer Active Tenant/Owner > Active Other > Anyone else
+        let sender = users.find(u => u.isActive && (u.role === 'TENANT' || u.role === 'OWNER')) 
+                  || users.find(u => u.isActive)
+                  || users[0];
+
         if (!sender) {
-            console.warn(`⚠️ Webhook Match Failed! No user found with phone matching: ${cleanFrom} (Original: ${From})`);
-            
+            console.warn(`⚠️ Webhook Match Failed! No user found matching: ${cleanFrom}`);
             res.set('Content-Type', 'text/xml');
             return res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Message>Sorry, we couldn't identify your account. Please contact your property manager.</Message>
 </Response>`);
         }
+
+        console.log(`✅ Webhook Matched: ${sender.name} (ID: ${sender.id}, Role: ${sender.role})`);
 
         // Find which admin to assign this to. 
         // Strategy: Find the admin who last sent a message to this user.
