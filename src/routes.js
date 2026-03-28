@@ -27,11 +27,12 @@ router.use('/auth', authRoutes);
 
 // Protected Admin Routes
 // 🌍 PUBLIC WEBHOOKS (No Authentication Required)
+// These MUST be before any router.use(authenticate) lines
 const twilioWebhookController = require('./modules/communication/twilio.webhook.controller');
 router.post('/webhooks/twilio/sms/incoming', twilioWebhookController.handleIncomingSMS);
 router.post('/webhooks/twilio/sms/status', twilioWebhookController.handleSMSStatusCallback);
 
-// 🔒 PROTECTED MODULES
+// 🔒 PROTECTED MODULES (All routes below this line require authentication)
 router.use('/admin/tenants', authenticate, tenantRoutes);
 router.use('/admin/leases', authenticate, leaseRoutes);
 router.use('/admin/units', authenticate, unitRoutes);

@@ -201,6 +201,7 @@ exports.getConversations = async (req, res) => {
                 name: u.name,
                 role: u.role,
                 email: u.email,
+                phone: u.phone,
                 type: u.type,
                 buildingIds: [
                     u.buildingId,

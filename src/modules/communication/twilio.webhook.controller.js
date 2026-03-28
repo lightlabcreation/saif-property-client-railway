@@ -15,38 +15,23 @@ exports.handleIncomingSMS = async (req, res) => {
             return res.status(400).send('Missing From number');
         }
 
-        // Clean the incoming phone number (get digits only)
-        const incomingDigits = From.replace(/\D/g, ''); 
-        const incomingLast10 = incomingDigits.slice(-10); // Get last 10 digits
+        // Clean the incoming phone number (remove +, and get last 10 digits for matching)
+        const cleanFrom = From.replace(/\D/g, '').slice(-10);
 
-        console.log(`🔍 Webhook Match Logic: Incoming="${From}" -> Clean="${incomingDigits}" -> Last10="${incomingLast10}"`);
+        console.log(`🔍 Webhook Match Logic: Incoming="${From}" -> Last10="${cleanFrom}"`);
 
         // Find the user by phone number (sender)
-        const allUsersWithPhone = await prisma.user.findMany({
+        // We use 'contains' with the last 10 digits to be robust against different DB formats (+1..., ..., ...)
+        const sender = await prisma.user.findFirst({
             where: {
-                NOT: { phone: null },
-                phone: { not: '' }
-            },
-            select: { id: true, name: true, phone: true, role: true }
-        });
-
-        const sender = allUsersWithPhone.find(user => {
-            const userDigits = user.phone.replace(/\D/g, ''); // DB number digits
-            const userLast10 = userDigits.slice(-10); // DB number last 10
-            return userLast10 === incomingLast10;
+                phone: {
+                    contains: cleanFrom
+                }
+            }
         });
 
         if (!sender) {
-            console.warn(`⚠️ Webhook Match Failed! Incoming Last10: ${incomingLast10}`);
-            // Log all available numbers in memory to see what's actually in the live DB
-            const dbPhones = allUsersWithPhone.map(u => ({
-                id: u.id,
-                name: u.name,
-                raw: u.phone,
-                digits: u.phone.replace(/\D/g, ''),
-                last10: u.phone.replace(/\D/g, '').slice(-10)
-            }));
-            console.log('Full Database Phone Check:', JSON.stringify(dbPhones, null, 2));
+            console.warn(`⚠️ Webhook Match Failed! No user found with phone matching: ${cleanFrom} (Original: ${From})`);
             
             res.set('Content-Type', 'text/xml');
             return res.send(`<?xml version="1.0" encoding="UTF-8"?>
