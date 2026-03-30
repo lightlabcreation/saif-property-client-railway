@@ -42,12 +42,12 @@ router.put('/owners/:id', checkPermission('Owners', 'edit'), adminController.upd
 router.post('/owners/:id/send-invite', checkPermission('Owners', 'edit'), adminController.sendInvite);
 router.delete('/owners/:id', checkPermission('Owners', 'delete'), adminController.deleteOwner);
 
-router.get('/tickets', ticketController.getAllTickets);
-router.post('/tickets', ticketController.createTicket);
-router.put('/tickets/:id/status', ticketController.updateTicketStatus);
-router.put('/tickets/:id', ticketController.updateTicket);
-router.delete('/tickets/:id', ticketController.deleteTicket);
-router.get('/tickets/:ticketId/attachments/:attachmentId', ticketController.getTicketAttachment);
+router.get('/tickets', checkPermission('Tickets', 'view'), ticketController.getAllTickets);
+router.post('/tickets', checkPermission('Tickets', 'add'), ticketController.createTicket);
+router.put('/tickets/:id/status', checkPermission('Tickets', 'edit'), ticketController.updateTicketStatus);
+router.put('/tickets/:id', checkPermission('Tickets', 'edit'), ticketController.updateTicket);
+router.delete('/tickets/:id', checkPermission('Tickets', 'delete'), ticketController.deleteTicket);
+router.get('/tickets/:ticketId/attachments/:attachmentId', checkPermission('Tickets', 'view'), ticketController.getTicketAttachment);
 
 router.get('/invoices', checkPermission('Invoices', 'view'), invoiceController.getInvoices);
 router.post('/invoices', checkPermission('Invoices', 'add'), invoiceController.createInvoice);
@@ -57,53 +57,53 @@ router.get('/invoices/:id/download', checkPermission('Invoices', 'view'), invoic
 router.post('/invoices/batch', checkPermission('Invoices', 'add'), invoiceController.runBatchInvoicing);
 
 const serviceItemController = require('./serviceItem.controller');
-router.get('/service-items', serviceItemController.getServiceItems);
-router.post('/service-items', serviceItemController.createServiceItem);
-router.put('/service-items/:id', serviceItemController.updateServiceItem);
-router.delete('/service-items/:id', serviceItemController.deleteServiceItem);
+router.get('/service-items', checkPermission('Invoices', 'view'), serviceItemController.getServiceItems);
+router.post('/service-items', checkPermission('Invoices', 'add'), serviceItemController.createServiceItem);
+router.put('/service-items/:id', checkPermission('Invoices', 'edit'), serviceItemController.updateServiceItem);
+router.delete('/service-items/:id', checkPermission('Invoices', 'delete'), serviceItemController.deleteServiceItem);
 
 const paymentController = require('./payment.controller');
-router.get('/payments', paymentController.getReceivedPayments);
-router.post('/payments', paymentController.recordPayment);
-router.get('/outstanding-dues', paymentController.getOutstandingDues);
-router.get('/payments/:id/download', paymentController.downloadReceiptPDF);
+router.get('/payments', checkPermission('Payments Received', 'view'), paymentController.getReceivedPayments);
+router.post('/payments', checkPermission('Payments Received', 'add'), paymentController.recordPayment);
+router.get('/outstanding-dues', checkPermission('Outstanding Dues', 'view'), paymentController.getOutstandingDues);
+router.get('/payments/:id/download', checkPermission('Payments Received', 'view'), paymentController.downloadReceiptPDF);
 
 const refundController = require('./refund.controller');
-router.get('/refunds', refundController.getRefunds);
-router.post('/refunds', refundController.createRefund);
-router.get('/refunds/calculate/:tenantId', refundController.calculateRefund);
-router.put('/refunds/:id', refundController.updateRefund);
-router.delete('/refunds/:id', refundController.deleteRefund);
+router.get('/refunds', checkPermission('Refunds', 'view'), refundController.getRefunds);
+router.post('/refunds', checkPermission('Refunds', 'add'), refundController.createRefund);
+router.get('/refunds/calculate/:tenantId', checkPermission('Refunds', 'view'), refundController.calculateRefund);
+router.put('/refunds/:id', checkPermission('Refunds', 'edit'), refundController.updateRefund);
+router.delete('/refunds/:id', checkPermission('Refunds', 'delete'), refundController.deleteRefund);
 
 router.get('/leases', checkPermission('Leases', 'view'), leaseController.getLeaseHistory);
 router.delete('/leases/:id', checkPermission('Leases', 'delete'), leaseController.deleteLease);
 router.put('/leases/:id', checkPermission('Leases', 'edit'), leaseController.updateLease);
 router.get('/leases/:id/download', checkPermission('Leases', 'view'), leaseController.downloadLeasePDF);
 
-router.get('/insurance/compliance', insuranceController.getComplianceDashboard);
-router.post('/insurance', insuranceController.createInsurance);
-router.put('/insurance/:id', insuranceController.updateInsurance);
-router.post('/insurance/check-alerts', insuranceController.checkInsuranceExpirations);
-router.get('/insurance/alerts', insuranceController.getInsuranceAlerts);
-router.get('/insurance/stats', insuranceController.getInsuranceStats);
-router.post('/insurance/:id/approve', insuranceController.approveInsurance);
-router.post('/insurance/:id/reject', insuranceController.rejectInsurance);
+router.get('/insurance/compliance', checkPermission('Insurance', 'view'), insuranceController.getComplianceDashboard);
+router.post('/insurance', checkPermission('Insurance', 'add'), insuranceController.createInsurance);
+router.put('/insurance/:id', checkPermission('Insurance', 'edit'), insuranceController.updateInsurance);
+router.post('/insurance/check-alerts', checkPermission('Insurance', 'edit'), insuranceController.checkInsuranceExpirations);
+router.get('/insurance/alerts', checkPermission('Insurance', 'view'), insuranceController.getInsuranceAlerts);
+router.get('/insurance/stats', checkPermission('Insurance', 'view'), insuranceController.getInsuranceStats);
+router.post('/insurance/:id/approve', checkPermission('Insurance', 'edit'), insuranceController.approveInsurance);
+router.post('/insurance/:id/reject', checkPermission('Insurance', 'edit'), insuranceController.rejectInsurance);
 
-router.get('/maintenance', maintenanceController.getTasks);
-router.post('/maintenance', maintenanceController.createTask);
-router.put('/maintenance/:id', maintenanceController.updateTask);
-router.delete('/maintenance/:id', maintenanceController.deleteTask);
+router.get('/maintenance', checkPermission('Maintenance', 'view'), maintenanceController.getTasks);
+router.post('/maintenance', checkPermission('Maintenance', 'add'), maintenanceController.createTask);
+router.put('/maintenance/:id', checkPermission('Maintenance', 'edit'), maintenanceController.updateTask);
+router.delete('/maintenance/:id', checkPermission('Maintenance', 'delete'), maintenanceController.deleteTask);
 
-router.get('/accounting/transactions', accountingController.getTransactions);
-router.post('/accounting/transactions', accountingController.createTransaction);
+router.get('/accounting/transactions', checkPermission('General Ledger', 'view'), accountingController.getTransactions);
+router.post('/accounting/transactions', checkPermission('General Ledger', 'add'), accountingController.createTransaction);
 
-router.get('/communication/emails', communicationController.getEmailLogs);
-router.delete('/communication/emails/:id', communicationController.deleteEmailLog);
-router.post('/communication/send-email', communicationController.sendComposeEmail);
-router.get('/communication', communicationController.getHistory);
-router.post('/communication', communicationController.sendMessage);
-router.delete('/communication/:id', communicationController.deleteLog);
-router.post('/communication/bulk-delete', communicationController.bulkDeleteLogs);
+router.get('/communication/emails', checkPermission('Sent Emails', 'view'), communicationController.getEmailLogs);
+router.delete('/communication/emails/:id', checkPermission('Sent Emails', 'delete'), communicationController.deleteEmailLog);
+router.post('/communication/send-email', checkPermission('Send Email', 'add'), communicationController.sendComposeEmail);
+router.get('/communication', checkPermission('Communication', 'view'), communicationController.getHistory);
+router.post('/communication', checkPermission('Communication', 'add'), communicationController.sendMessage);
+router.delete('/communication/:id', checkPermission('Communication', 'delete'), communicationController.deleteLog);
+router.post('/communication/bulk-delete', checkPermission('Communication', 'delete'), communicationController.bulkDeleteLogs);
 
 router.get('/analytics/revenue', analyticsController.getRevenueStats);
 router.get('/analytics/vacancy', analyticsController.getVacancyStats);
@@ -115,15 +115,15 @@ router.get('/reports/:id/download', checkPermission('Reports', 'view'), reportsC
 router.get('/settings', settingsController.getSettings);
 router.post('/settings', settingsController.updateSettings);
 
-router.get('/taxes', taxController.getTaxes);
-router.post('/taxes', taxController.updateTaxes);
-router.patch('/taxes/:id', taxController.updateTax);
-router.delete('/taxes/:id', taxController.deleteTax);
+router.get('/taxes', checkPermission('Tax Settings', 'view'), taxController.getTaxes);
+router.post('/taxes', checkPermission('Tax Settings', 'add'), taxController.updateTaxes);
+router.patch('/taxes/:id', checkPermission('Tax Settings', 'edit'), taxController.updateTax);
+router.delete('/taxes/:id', checkPermission('Tax Settings', 'delete'), taxController.deleteTax);
 
-router.get('/accounts', accountController.getAccounts);
-router.post('/accounts', accountController.createAccount);
-router.patch('/accounts/:id', accountController.updateAccount);
-router.delete('/accounts/:id', accountController.deleteAccount);
+router.get('/accounts', checkPermission('Chart of Accounts', 'view'), accountController.getAccounts);
+router.post('/accounts', checkPermission('Chart of Accounts', 'add'), accountController.createAccount);
+router.patch('/accounts/:id', checkPermission('Chart of Accounts', 'edit'), accountController.updateAccount);
+router.delete('/accounts/:id', checkPermission('Chart of Accounts', 'delete'), accountController.deleteAccount);
 
 router.get('/documents', checkPermission('Documents', 'view'), documentController.getAllDocuments);
 router.post('/documents/upload', checkPermission('Documents', 'add'), documentController.uploadDocument);
@@ -144,6 +144,7 @@ router.put('/unit-types/:id', unitTypeController.updateUnitType);
 router.delete('/unit-types/:id', unitTypeController.deleteUnitType);
 
 const coworkerController = require('./coworker.controller');
+router.get('/my-permissions', coworkerController.getMyPermissions);
 router.get('/coworkers', coworkerController.getCoworkers);
 router.post('/coworkers', coworkerController.createCoworker);
 router.put('/coworkers/:id', coworkerController.updateCoworker);

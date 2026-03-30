@@ -4,27 +4,42 @@ const emailService = require('../../services/email.service');
 const smsService = require('../../services/sms.service');
 
 const modulesList = [
-    'Tenants',
-    'Owners',
+    'Dashboard',
+    'Overview',
+    'Vacancy Dashboard',
+    'Revenue Dashboard',
+    'Properties',
     'Buildings',
     'Units',
-    'Leases',
-    'Invoices',
-    'Rent Roll',
-    'Payments',
-    'Refunds',
-    'Insurance',
-    'Maintenance',
-    'Accounting',
-    'Communication',
-    'Analytics',
-    'Reports',
-    'Settings',
-    'Tickets',
-    'Documents',
+    'Tenants',
+    'Tenant List',
     'Vehicles',
-    'Dashboard',
-    'Email Logs'
+    'Insurance',
+    'Leases',
+    'Rent Roll',
+    'Documents',
+    'Payments',
+    'Invoices',
+    'Payments Received',
+    'Outstanding Dues',
+    'Refunds',
+    'Accounting',
+    'General Ledger',
+    'QuickBooks Sync',
+    'Chart of Accounts',
+    'Tax Settings',
+    'Reports',
+    'Communication',
+    'Inbox',
+    'Campaign Manager',
+    'Templates',
+    'Email Hub',
+    'Send Email',
+    'Email Templates',
+    'Sent Emails',
+    'Maintenance',
+    'Tickets',
+    'Settings'
 ];
 
 exports.getCoworkers = async (req, res) => {
@@ -35,24 +50,32 @@ exports.getCoworkers = async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        // Healing logic: if any coworker is missing modules, create them automatically
+        // Healing logic: add missing modules and remove extra ones
         for (const coworker of coworkers) {
-            if (coworker.permissions.length < modulesList.length) {
-                const existingModules = coworker.permissions.map(p => p.moduleName);
-                const missingModules = modulesList.filter(m => !existingModules.includes(m));
+            const existingModules = coworker.permissions.map(p => p.moduleName);
+            const missingModules = modulesList.filter(m => !existingModules.includes(m));
+            const extraModules = existingModules.filter(m => !modulesList.includes(m));
 
-                if (missingModules.length > 0) {
-                    await prisma.permission.createMany({
-                        data: missingModules.map(m => ({
-                            userId: coworker.id,
-                            moduleName: m,
-                            canView: false,
-                            canAdd: false,
-                            canEdit: false,
-                            canDelete: false
-                        }))
-                    });
-                }
+            if (missingModules.length > 0) {
+                await prisma.permission.createMany({
+                    data: missingModules.map(m => ({
+                        userId: coworker.id,
+                        moduleName: m,
+                        canView: false,
+                        canAdd: false,
+                        canEdit: false,
+                        canDelete: false
+                    }))
+                });
+            }
+
+            if (extraModules.length > 0) {
+                await prisma.permission.deleteMany({
+                    where: {
+                        userId: coworker.id,
+                        moduleName: { in: extraModules }
+                    }
+                });
             }
         }
 
@@ -210,6 +233,21 @@ exports.getPermissions = async (req, res) => {
         res.json(permissions);
     } catch (error) {
         console.error('Get Permissions Error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+exports.getMyPermissions = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+        const permissions = await prisma.permission.findMany({
+            where: { userId: parseInt(userId) }
+        });
+        res.json(permissions);
+    } catch (error) {
+        console.error('Get My Permissions Error:', error);
         res.status(500).json({ message: 'Server error' });
     }
 };

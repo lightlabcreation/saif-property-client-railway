@@ -116,14 +116,15 @@ exports.getHistory = async (req, res) => {
             return res.status(400).json({ error: 'Invalid user ID' });
         }
 
-        // Shared Inbox Logic for Admins:
-        // Admins see all messages between the target user and ANY admin.
-        // Residents/Tenants only see messages between them and admins.
-        const whereClause = userRole === 'ADMIN'
+        // Shared Inbox Logic for Admins & Coworkers:
+        // Management staff see all messages between the target user and ANY admin/staff.
+        // Residents/Tenants only see messages between them and the management team.
+        const isAdminOrStaff = userRole === 'ADMIN' || userRole === 'COWORKER';
+        const whereClause = isAdminOrStaff
             ? {
                 OR: [
-                    { senderId: otherUserId, receiver: { role: 'ADMIN' } },
-                    { sender: { role: 'ADMIN' }, receiverId: otherUserId }
+                    { senderId: otherUserId, receiver: { role: { in: ['ADMIN', 'COWORKER'] } } },
+                    { sender: { role: { in: ['ADMIN', 'COWORKER'] } }, receiverId: otherUserId }
                 ]
             }
             : {
@@ -163,7 +164,8 @@ exports.getConversations = async (req, res) => {
         // If Admin: fetch ALL Tenants and Owners.
         // If Tenant/Owner: fetch ONLY Admin(s).
 
-        if (userRole === 'ADMIN') {
+        const isAdminOrStaff = userRole === 'ADMIN' || userRole === 'COWORKER';
+        if (isAdminOrStaff) {
             // Fetch all users except self (Owners and Tenants)
             const users = await prisma.user.findMany({
                 where: {
@@ -260,21 +262,21 @@ exports.getConversations = async (req, res) => {
                     ? parseInt(recipient.id.replace('resident_', ''))
                     : recipient.id;
 
-                // For Admins, count unread messages from this user to ANY admin
+                // Count unread messages from this user to ANY management staff
                 const unreadCount = await prisma.message.count({
                     where: {
                         senderId: targetNumericId,
-                        receiver: { role: 'ADMIN' },
+                        receiver: { role: { in: ['ADMIN', 'COWORKER'] } },
                         isRead: false
                     }
                 });
 
-                // Find the last message exchanged between this user and ANY admin
+                // Find the last message exchanged between this user and ANY management staff
                 const lastMessage = await prisma.message.findFirst({
                     where: {
                         OR: [
-                            { senderId: targetNumericId, receiver: { role: 'ADMIN' } },
-                            { sender: { role: 'ADMIN' }, receiverId: targetNumericId }
+                            { senderId: targetNumericId, receiver: { role: { in: ['ADMIN', 'COWORKER'] } } },
+                            { sender: { role: { in: ['ADMIN', 'COWORKER'] } }, receiverId: targetNumericId }
                         ]
                     },
                     orderBy: { createdAt: 'desc' }
@@ -307,11 +309,12 @@ exports.markAsRead = async (req, res) => {
         const userRole = req.user.role;
         const senderId = parseInt(req.body.senderId); // The person whose messages I am reading
 
-        // If Admin, mark all messages from this person to ANY admin as read
-        const updateWhere = userRole === 'ADMIN'
+        // Mark messages as read from this person to ANY management staff
+        const isAdminOrStaff = userRole === 'ADMIN' || userRole === 'COWORKER';
+        const updateWhere = isAdminOrStaff
             ? {
                 senderId: senderId,
-                receiver: { role: 'ADMIN' },
+                receiver: { role: { in: ['ADMIN', 'COWORKER'] } },
                 isRead: false
             }
             : {

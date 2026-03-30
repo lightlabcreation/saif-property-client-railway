@@ -4,12 +4,12 @@ const tenantController = require('./tenant.controller');
 
 const { checkPermission } = require('../../middlewares/permission.middleware');
 
-router.get('/', checkPermission('Tenants', 'view'), tenantController.getAllTenants);
-router.get('/:id', checkPermission('Tenants', 'view'), tenantController.getTenantById);
-router.get('/:id/tickets', checkPermission('Tenants', 'view'), tenantController.getTenantTickets);
-router.post('/', checkPermission('Tenants', 'add'), tenantController.createTenant);
-router.put('/:id', checkPermission('Tenants', 'edit'), tenantController.updateTenant);
-router.post('/:id/send-invite', checkPermission('Tenants', 'edit'), tenantController.sendInvite);
-router.delete('/:id', checkPermission('Tenants', 'delete'), tenantController.deleteTenant);
+router.get('/', checkPermission('Tenant List', 'view'), tenantController.getAllTenants);
+router.get('/:id', checkPermission('Tenant List', 'view'), tenantController.getTenantById);
+router.get('/:id/tickets', checkPermission('Tenant List', 'view'), tenantController.getTenantTickets);
+router.post('/', checkPermission('Tenant List', 'add'), tenantController.createTenant);
+router.put('/:id', checkPermission('Tenant List', 'edit'), tenantController.updateTenant);
+router.post('/:id/send-invite', checkPermission('Tenant List', 'edit'), tenantController.sendInvite);
+router.delete('/:id', checkPermission('Tenant List', 'delete'), tenantController.deleteTenant);
 
 module.exports = router;

@@ -44,20 +44,29 @@ exports.handleIncomingSMS = async (req, res) => {
         console.log(`✅ Webhook Matched: ${sender.name} (ID: ${sender.id}, Role: ${sender.role})`);
 
         // Find which admin to assign this to. 
-        // Strategy: Find the admin who last sent a message to this user.
+        // Strategy: Find the last interaction (sent or received) between any staff and this sender.
         // Fallback: Use the first admin found in the system.
-        const lastMessageToSender = await prisma.message.findFirst({
+        const lastInteraction = await prisma.message.findFirst({
             where: {
-                receiverId: sender.id,
-                sender: { role: 'ADMIN' }
+                OR: [
+                    { senderId: sender.id, receiver: { role: { in: ['ADMIN', 'COWORKER'] } } },
+                    { receiverId: sender.id, sender: { role: { in: ['ADMIN', 'COWORKER'] } } }
+                ]
             },
             orderBy: { createdAt: 'desc' },
-            select: { senderId: true }
+            select: { 
+                senderId: true, 
+                receiverId: true,
+                sender: { select: { role: true } },
+                receiver: { select: { role: true } }
+            }
         });
 
         let assignedAdminId;
-        if (lastMessageToSender) {
-            assignedAdminId = lastMessageToSender.senderId;
+        if (lastInteraction) {
+            assignedAdminId = ['ADMIN', 'COWORKER'].includes(lastInteraction.sender?.role) 
+                ? lastInteraction.senderId 
+                : lastInteraction.receiverId;
         } else {
             const firstAdmin = await prisma.user.findFirst({
                 where: { role: 'ADMIN' }

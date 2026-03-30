@@ -22,7 +22,6 @@ exports.checkPermission = (moduleName, action) => {
             }
 
             // Find the permission record for this user and specific module
-            // Module names are: Tenants, Owners, Buildings, Units, etc.
             const permission = await prisma.permission.findFirst({
                 where: {
                     userId: parseInt(userId),
@@ -55,6 +54,42 @@ exports.checkPermission = (moduleName, action) => {
         } catch (error) {
             console.error('Check Permission Middleware Error:', error);
             res.status(500).json({ message: 'Internal server error checking permissions' });
+        }
+    };
+};
+
+exports.checkAnyPermission = (moduleNames, action) => {
+    return async (req, res, next) => {
+        try {
+            const userId = req.user?.id;
+            const userRole = req.user?.role;
+            if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+            if (userRole === 'ADMIN' || userRole !== 'COWORKER') return next();
+
+            const permissions = await prisma.permission.findMany({
+                where: {
+                    userId: parseInt(userId),
+                    moduleName: { in: moduleNames }
+                }
+            });
+
+            const hasAccess = permissions.some(p => {
+                const requiredAction = action.toLowerCase();
+                if (requiredAction === 'view') return p.canView;
+                if (requiredAction === 'add') return p.canAdd;
+                if (requiredAction === 'edit') return p.canEdit;
+                if (requiredAction === 'delete') return p.canDelete;
+                return false;
+            });
+
+            if (hasAccess) return next();
+            
+            return res.status(403).json({ 
+                message: `Permission denied. You need access to any of: ${moduleNames.join(', ')}` 
+            });
+        } catch (error) {
+            console.error('Check Any Permission Middleware Error:', error);
+            res.status(500).json({ message: 'Internal server error' });
         }
     };
 };
