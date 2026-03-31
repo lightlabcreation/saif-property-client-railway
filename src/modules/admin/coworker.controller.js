@@ -113,6 +113,7 @@ exports.createCoworker = async (req, res) => {
                 role: 'COWORKER',
                 isInvited: false,
                 isActive: true,
+                preferredLanguage: req.body.preferredLanguage || 'English',
                 name: `${firstName || ''} ${lastName || ''}`.trim() || email,
                 permissions: {
                     create: modulesList.map(module => {
@@ -149,6 +150,7 @@ exports.updateCoworker = async (req, res) => {
             phone,
             title,
             isActive,
+            preferredLanguage: req.body.preferredLanguage,
             name: `${firstName || ''} ${lastName || ''}`.trim() || email
         };
 
@@ -276,6 +278,7 @@ exports.updatePermissions = async (req, res) => {
 exports.sendInvitation = async (req, res) => {
     try {
         const { id } = req.params;
+        const { templateId } = req.body;
         
         const inviteToken = crypto.randomBytes(32).toString('hex');
         const inviteExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
@@ -289,21 +292,55 @@ exports.sendInvitation = async (req, res) => {
             }
         });
 
-        // Fetch coworker details
+        // Fetch coworker details with their preferred language
         const coworker = await prisma.user.findUnique({
             where: { id: parseInt(id) }
         });
-
-        // Send the invitation via Email only
-        const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-        const inviteLink = `${baseUrl}/invite?token=${inviteToken}`;
-        const welcomeMsg = `Hello ${coworker.name || 'Team Member'},\n\nYou've been invited to join the Property Management system.\n\nStart here: ${inviteLink}`;
 
         if (!coworker.email) {
             return res.status(400).json({ message: 'Coworker email is missing' });
         }
 
-        const eRes = await emailService.sendEmail(coworker.email, 'Team Invitation', welcomeMsg);
+        const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const inviteLink = `${baseUrl}/invite?token=${inviteToken}`;
+        
+        // --- PHASE 3: Template Logic ---
+        const langCode = coworker.preferredLanguage?.toLowerCase().includes('french') ? 'fr' : 'en';
+        
+        let dbTemplate = null;
+        const parsedTemplateId = parseInt(templateId);
+        if (templateId && !isNaN(parsedTemplateId)) {
+            // Manual selection from UI - Force Int type for Prisma
+            dbTemplate = await prisma.emailTemplate.findUnique({
+                where: { id: parsedTemplateId }
+            });
+            console.log(`[Invitation] Manual template selected: ${parsedTemplateId}, Found: ${!!dbTemplate}`);
+        } else {
+            // Auto-pick based on type and language
+            dbTemplate = await prisma.emailTemplate.findFirst({
+                where: {
+                    type: 'INVITATION',
+                    language: langCode
+                }
+            });
+            console.log(`[Invitation] Auto-picking template for ${langCode}, Found: ${!!dbTemplate}`);
+        }
+
+        let subject = 'Team Invitation';
+        let finalBody = `Hello ${coworker.name || 'Team Member'},<br/><br/>You've been invited to join the Property Management system.<br/><br/>Start here: <a href="${inviteLink}" style="color: #4f46e5; font-weight: bold; text-decoration: underline;">${inviteLink}</a>`;
+
+        if (dbTemplate) {
+            subject = dbTemplate.subject;
+            // Replace placeholders: {{link}} (as a clickable <a> tag) and {{name}}
+            const clickableLink = `<a href="${inviteLink}" style="color: #4f46e5; font-weight: bold; text-decoration: underline;">${inviteLink}</a>`;
+            finalBody = dbTemplate.body
+                .replace(/{{link}}/g, clickableLink)
+                .replace(/{{name}}/g, coworker.name || (langCode === 'fr' ? 'Membre de l\'équipe' : 'Team Member'));
+        }
+        // --- END PHASE 3 ---
+
+        console.log(`[Invitation] Sending email to ${coworker.email} | Subject: ${subject} | Template Found: ${!!dbTemplate}`);
+        const eRes = await emailService.sendEmail(coworker.email, subject, finalBody, { isHtml: true });
         
         if (!eRes.success) {
             console.error('Email failed to send:', eRes.error);

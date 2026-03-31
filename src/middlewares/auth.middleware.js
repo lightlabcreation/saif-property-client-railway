@@ -1,6 +1,8 @@
 const jwt = require('jsonwebtoken');
 
-exports.authenticate = (req, res, next) => {
+const prisma = require('../config/prisma');
+
+exports.authenticate = async (req, res, next) => {
     let token = '';
     const authHeader = req.headers.authorization;
 
@@ -13,6 +15,17 @@ exports.authenticate = (req, res, next) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // Phase 2: Check if user is still active in the database
+        const user = await prisma.user.findUnique({
+            where: { id: decoded.id },
+            select: { isActive: true, role: true }
+        });
+
+        if (!user || !user.isActive) {
+            return res.status(401).json({ message: 'Access revoked' });
+        }
+
         req.user = decoded;
         next();
     } catch (err) {

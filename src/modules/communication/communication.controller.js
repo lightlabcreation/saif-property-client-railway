@@ -170,10 +170,11 @@ exports.getConversations = async (req, res) => {
             const users = await prisma.user.findMany({
                 where: {
                     id: { not: userId },
-                    role: { in: ['TENANT', 'OWNER'] },
+                    role: { in: ['TENANT', 'OWNER', 'COWORKER'] },
                     type: { not: 'RESIDENT' },
                     OR: [
                         { role: 'OWNER' },
+                        { role: 'COWORKER' },
                         { AND: [
                             { role: 'TENANT' },
                             { leases: { some: { status: 'Active' } } }
@@ -267,7 +268,7 @@ exports.getConversations = async (req, res) => {
                     where: {
                         senderId: targetNumericId,
                         receiver: { role: { in: ['ADMIN', 'COWORKER'] } },
-                        isRead: false
+                        isReadByAdmin: false
                     }
                 });
 
@@ -315,7 +316,10 @@ exports.markAsRead = async (req, res) => {
             ? {
                 senderId: senderId,
                 receiver: { role: { in: ['ADMIN', 'COWORKER'] } },
-                isRead: false
+                OR: [
+                    { isRead: false },
+                    { isReadByAdmin: false }
+                ]
             }
             : {
                 senderId: senderId,
@@ -325,7 +329,10 @@ exports.markAsRead = async (req, res) => {
 
         await prisma.message.updateMany({
             where: updateWhere,
-            data: { isRead: true }
+            data: { 
+                isRead: true,
+                isReadByAdmin: true
+            }
         });
 
         res.json({ success: true });

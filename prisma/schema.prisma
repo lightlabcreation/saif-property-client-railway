@@ -280,6 +280,8 @@ model EmailTemplate {
   name        String
   subject     String
   body        String   @db.Text
+  language    String   @default("en")
+  type        String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   communicationLogs CommunicationLog[]

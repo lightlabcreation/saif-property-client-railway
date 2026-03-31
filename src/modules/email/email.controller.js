@@ -50,6 +50,8 @@ exports.createTemplate = async (req, res) => {
                 name,
                 subject,
                 body,
+                language: req.body.language || 'en',
+                type: req.body.type || null,
                 documents: documentIds ? { connect: documentIds.map(id => ({ id: parseInt(id) })) } : undefined
             },
             include: { documents: true }
@@ -79,6 +81,8 @@ exports.updateTemplate = async (req, res) => {
                 name,
                 subject,
                 body,
+                language: req.body.language,
+                type: req.body.type,
                 documents: documentIds ? { connect: documentIds.map(id => ({ id: parseInt(id) })) } : undefined
             },
             include: { documents: true }

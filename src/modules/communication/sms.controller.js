@@ -92,17 +92,23 @@ exports.createCampaign = async (req, res) => {
         }
 
         // 1. Build recipient list based on filters
-        const whereClause = {
-            isActive: true,
-            role: 'TENANT'
+        let whereClause = {
+            isActive: true
         };
 
-        if (buildingId) {
-            whereClause.buildingId = parseInt(buildingId);
+        if (recipientType === 'COWORKERS') {
+            whereClause.role = 'COWORKER';
+        } else if (recipientType === 'ALL') {
+             // Handle ALL: (Tenant in Building) OR (Coworker)
+             // For simple prisma query, we can do multiple fetches or a complex OR
+             whereClause.role = { in: ['TENANT', 'COWORKER'] };
+        } else {
+            // Default: TENANTS
+            whereClause.role = 'TENANT';
+            if (buildingId) {
+                whereClause.buildingId = parseInt(buildingId);
+            }
         }
-
-        // If recipientType is just 'Tenants' (not residents), we have Role check
-        // If they want Residents, we would expand this
 
         const recipients = await prisma.user.findMany({
             where: whereClause,
@@ -161,17 +167,35 @@ exports.getCampaigns = async (req, res) => {
 };
 
 /**
- * Get unread messages count for Admin
+ * Get unread messages count for Admin (Synced with Inbox visibility)
  */
 exports.getUnreadStats = async (req, res) => {
     try {
         const count = await prisma.message.count({
             where: {
                 direction: 'INBOUND',
-                isReadByAdmin: false
+                isReadByAdmin: false,
+                sender: {
+                    OR: [
+                        { role: 'OWNER' },
+                        { 
+                            AND: [
+                                { role: 'TENANT' },
+                                { type: { not: 'RESIDENT' } },
+                                { leases: { some: { status: 'Active' } } }
+                            ]
+                        },
+                        {
+                            AND: [
+                                { type: 'RESIDENT' },
+                                { residentLease: { status: 'Active' } }
+                            ]
+                        }
+                    ]
+                }
             }
         });
-        res.json({ unreadCount: count });
+        res.json({ count });
     } catch (error) {
         console.error('Error fetching unread stats:', error);
         res.status(500).json({ error: 'Failed to fetch stats' });
