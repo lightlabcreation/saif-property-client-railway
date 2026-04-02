@@ -296,7 +296,6 @@ exports.runBatchInvoicing = async (req, res) => {
     // 1. Initialize RentRun Record
     const rentRun = await prisma.rentRun.create({
         data: {
-            month: currentMonth,
             status: 'Pending'
         }
     });
@@ -330,10 +329,8 @@ exports.runBatchInvoicing = async (req, res) => {
                 if (existing) {
                     await prisma.rentRunLog.create({
                         data: {
-                            runId: rentRun.id,
-                            leaseId: lease.id,
-                            status: 'Skipped',
-                            message: 'Rent invoice already exists for this period.'
+                            rentRunId: rentRun.id,
+                            message: `[Skipped] Lease ID ${lease.id}: Rent invoice already exists for ${currentMonth}.`
                         }
                     });
                     skippedCount++;
@@ -345,10 +342,8 @@ exports.runBatchInvoicing = async (req, res) => {
                 if (rentAmount <= 0) {
                     await prisma.rentRunLog.create({
                         data: {
-                            runId: rentRun.id,
-                            leaseId: lease.id,
-                            status: 'Skipped',
-                            message: 'Lease monthlyRent is 0 or invalid.'
+                            rentRunId: rentRun.id,
+                            message: `[Skipped] Lease ID ${lease.id}: Monthly rent is 0 or invalid.`
                         }
                     });
                     skippedCount++;
@@ -366,10 +361,8 @@ exports.runBatchInvoicing = async (req, res) => {
                 if (!billableTenantId) {
                     await prisma.rentRunLog.create({
                         data: {
-                            runId: rentRun.id,
-                            leaseId: lease.id,
-                            status: 'Skipped',
-                            message: 'No billable tenant (parent) found for this resident.'
+                            rentRunId: rentRun.id,
+                            message: `[Skipped] Lease ID ${lease.id}: No billable tenant (parent) found for this resident.`
                         }
                     });
                     skippedCount++;
@@ -396,10 +389,8 @@ exports.runBatchInvoicing = async (req, res) => {
 
                 await prisma.rentRunLog.create({
                     data: {
-                        runId: rentRun.id,
-                        leaseId: lease.id,
-                        status: 'Success',
-                        message: `Invoice ${invoiceNo} generated.`
+                        rentRunId: rentRun.id,
+                        message: `[Success] Lease ID ${lease.id}: Invoice ${invoiceNo} generated.`
                     }
                 });
 
@@ -410,10 +401,8 @@ exports.runBatchInvoicing = async (req, res) => {
                 console.error(`[Batch Run] Error processing Lease ID ${lease.id}:`, innerError);
                 await prisma.rentRunLog.create({
                     data: {
-                        runId: rentRun.id,
-                        leaseId: lease.id,
-                        status: 'Error',
-                        message: innerError.message || 'Unknown processing error.'
+                        rentRunId: rentRun.id,
+                        message: `[Error] Lease ID ${lease.id}: ${innerError.message || 'Unknown processing error.'}`
                     }
                 });
                 skippedCount++;
@@ -425,7 +414,7 @@ exports.runBatchInvoicing = async (req, res) => {
             where: { id: rentRun.id },
             data: {
                 status: 'Completed',
-                createdCount,
+                successCount: createdCount,
                 skippedCount,
                 totalAmount
             }

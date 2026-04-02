@@ -85,10 +85,19 @@ class PlaceholderService {
     static resolve(text, data) {
         if (!text) return '';
         let resolved = text;
+        
+        // Replace placeholders
         Object.keys(data).forEach(key => {
             const regex = new RegExp(`{{${key}}}`, 'g');
             resolved = resolved.replace(regex, data[key] || '');
         });
+
+        // Apply HTML formatting for clean display in email clients
+        // 1. Convert newlines to <br/> tags
+        resolved = resolved.replace(/\n/g, '<br/>');
+        // 2. Convert markdown-style bold (**text**) to HTML bold (<b>text</b>)
+        resolved = resolved.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+
         return resolved;
     }
 }
