@@ -3,15 +3,24 @@ const prisma = require('../../config/prisma');
 // GET /api/admin/refunds
 exports.getRefunds = async (req, res) => {
     try {
-        const refunds = await prisma.refundAdjustment.findMany({
-            include: {
-                tenant: true,
-                unit: true
-            },
-            orderBy: {
-                date: 'desc'
-            }
-        });
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        const [refunds, total] = await Promise.all([
+            prisma.refundAdjustment.findMany({
+                include: {
+                    tenant: true,
+                    unit: true
+                },
+                orderBy: {
+                    date: 'desc'
+                },
+                skip,
+                take: limit
+            }),
+            prisma.refundAdjustment.count()
+        ]);
 
         const formatted = refunds.map(r => ({
             id: r.requestId,
@@ -33,7 +42,12 @@ exports.getRefunds = async (req, res) => {
             outcomeReason: r.outcomeReason || 'Pending review'
         }));
 
-        res.json(formatted);
+        res.json({
+            data: formatted,
+            total,
+            page,
+            totalPages: Math.ceil(total / limit)
+        });
     } catch (e) {
         console.error(e);
         res.status(500).json({ message: 'Server error' });

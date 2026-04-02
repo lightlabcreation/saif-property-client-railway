@@ -331,11 +331,17 @@ exports.sendInvitation = async (req, res) => {
 
         if (dbTemplate) {
             subject = dbTemplate.subject;
-            // Replace placeholders: {{link}} (as a clickable <a> tag) and {{name}}
+            // First, substitute placeholders (name and link)
             const clickableLink = `<a href="${inviteLink}" style="color: #4f46e5; font-weight: bold; text-decoration: underline;">${inviteLink}</a>`;
-            finalBody = dbTemplate.body
+            let processedBody = dbTemplate.body
                 .replace(/{{link}}/g, clickableLink)
                 .replace(/{{name}}/g, coworker.name || (langCode === 'fr' ? 'Membre de l\'équipe' : 'Team Member'));
+
+            // Second, handle formatting: Markdown bolding (**text**) to HTML (<b>text</b>)
+            processedBody = processedBody.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+
+            // Third, handle newlines: Convert \n to <br/> so it's not "bunched up" in HTML
+            finalBody = processedBody.replace(/\n/g, '<br/>');
         }
         // --- END PHASE 3 ---
 
