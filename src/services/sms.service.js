@@ -131,3 +131,27 @@ exports.processCampaign = async (recipients, templateContent, campaignId) => {
         }
     }
 };
+
+/**
+ * Replace placeholders like {{name}} with actual user data
+ */
+exports.parseTemplate = (template, user) => {
+    if (!template) return '';
+    if (!user) return template;
+
+    let message = template;
+    const placeholders = {
+        'tenantFirstName': user.name?.split(' ')[0] || '',
+        'tenantLastName': user.name?.split(' ').slice(1).join(' ') || '',
+        'tenantFullName': user.name || '',
+        'buildingName': user.building?.name || '',
+        'unitNumber': user.unit?.unitNumber || ''
+    };
+
+    Object.keys(placeholders).forEach(key => {
+        const regex = new RegExp(`{{${key}}}`, 'g');
+        message = message.replace(regex, placeholders[key]);
+    });
+
+    return message;
+};

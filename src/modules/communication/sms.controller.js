@@ -76,19 +76,28 @@ exports.deleteTemplate = async (req, res) => {
  */
 exports.createCampaign = async (req, res) => {
     try {
-        const { name, templateId, buildingId, recipientType } = req.body;
+        const { name, templateId, customContent, buildingId, recipientType } = req.body;
         const senderId = req.user.id;
 
-        if (!name || !templateId) {
-            return res.status(400).json({ error: 'Name and Template are required' });
+        if (!name || (!templateId && !customContent)) {
+            return res.status(400).json({ error: 'Name and a message (template or custom) are required' });
         }
 
-        const template = await prisma.sMSTemplate.findUnique({
-            where: { id: parseInt(templateId) }
-        });
+        let messageBody = customContent;
 
-        if (!template) {
-            return res.status(404).json({ error: 'Template not found' });
+        if (templateId) {
+            const template = await prisma.sMSTemplate.findUnique({
+                where: { id: parseInt(templateId) }
+            });
+
+            if (!template) {
+                return res.status(404).json({ error: 'Template not found' });
+            }
+            messageBody = template.content;
+        }
+
+        if (!messageBody) {
+            return res.status(400).json({ error: 'Message content cannot be empty' });
         }
 
         // 1. Build recipient list based on filters
@@ -135,7 +144,7 @@ exports.createCampaign = async (req, res) => {
 
         // 3. Start processing in background (Async)
         // We don't 'await' this so the response is immediate
-        smsService.processCampaign(recipients, template.content, campaign.id).catch(err => {
+        smsService.processCampaign(recipients, messageBody, campaign.id).catch(err => {
             console.error(`Fatal error in campaign ${campaign.id}:`, err);
         });
 
