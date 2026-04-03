@@ -22,6 +22,7 @@ router.put('/templates/:id', checkPermission('Templates', 'edit'), smsController
 router.delete('/templates/:id', checkPermission('Templates', 'delete'), smsController.deleteTemplate);
 router.post('/campaign', checkPermission('Campaign Manager', 'add'), smsController.createCampaign);
 router.get('/campaigns', checkPermission('Campaign Manager', 'view'), smsController.getCampaigns);
+router.delete('/campaign/:id', checkPermission('Campaign Manager', 'delete'), smsController.deleteCampaign);
 router.get('/unread-stats', checkPermission('Inbox', 'view'), smsController.getUnreadStats);
 
 module.exports = router;

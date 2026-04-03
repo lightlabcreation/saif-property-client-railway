@@ -210,3 +210,18 @@ exports.getUnreadStats = async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch stats' });
     }
 };
+/**
+ * Delete an SMS campaign
+ */
+exports.deleteCampaign = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await prisma.sMSCampaign.delete({
+            where: { id: parseInt(id) }
+        });
+        res.json({ success: true, message: 'Campaign deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting SMS campaign:', error);
+        res.status(500).json({ error: 'Failed to delete campaign' });
+    }
+};
