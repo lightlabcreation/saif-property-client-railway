@@ -75,60 +75,78 @@ exports.sendSMS = async (to, message) => {
  * @param {number} campaignId - The ID of the SMSCampaign record
  */
 exports.processCampaign = async (recipients, templateContent, campaignId) => {
-    let successCount = 0;
-    let failedCount = 0;
+    try {
+        let successCount = 0;
+        let failedCount = 0;
 
-    // Update status to PROCESSING
-    await prisma.sMSCampaign.update({
-        where: { id: campaignId },
-        data: { status: 'PROCESSING' }
-    });
+        // Fetch campaign once to get senderId
+        const campaign = await prisma.sMSCampaign.findUnique({ where: { id: campaignId } });
+        if (!campaign) throw new Error("Campaign not found");
+        const senderId = campaign.senderId;
 
-    for (let i = 0; i < recipients.length; i++) {
-        const user = recipients[i];
-        if (!user.phone) {
-            failedCount++;
-            continue;
-        }
+        // Update status to PROCESSING
+        await prisma.sMSCampaign.update({
+            where: { id: campaignId },
+            data: { status: 'PROCESSING' }
+        });
 
-        const personalizedMessage = exports.parseTemplate(templateContent, user);
-        const result = await exports.sendSMS(user.phone, personalizedMessage, { direction: 'OUTBOUND' });
-
-        if (result.success) {
-            successCount++;
-            // Log as a Message for the thread
-            await prisma.message.create({
-                data: {
-                    content: personalizedMessage,
-                    senderId: (await prisma.sMSCampaign.findUnique({ where: { id: campaignId } })).senderId,
-                    receiverId: user.id,
-                    smsSid: result.sid,
-                    smsStatus: result.status,
-                    sentVia: 'sms',
-                    direction: 'OUTBOUND',
-                    isRead: true
+        for (let i = 0; i < recipients.length; i++) {
+            try {
+                const user = recipients[i];
+                if (!user.phone) {
+                    failedCount++;
+                    continue;
                 }
-            });
-        } else {
-            failedCount++;
-        }
 
-        // Periodically update progress (every 5 messages or at the end)
-        if ((i + 1) % 5 === 0 || i === recipients.length - 1) {
-            await prisma.sMSCampaign.update({
-                where: { id: campaignId },
-                data: { 
-                    successCount, 
-                    failedCount,
-                    status: i === recipients.length - 1 ? 'COMPLETED' : 'PROCESSING'
+                const personalizedMessage = exports.parseTemplate(templateContent, user);
+                const result = await exports.sendSMS(user.phone, personalizedMessage);
+
+                if (result.success) {
+                    successCount++;
+                    // Log as a Message for the thread
+                    await prisma.message.create({
+                        data: {
+                            content: personalizedMessage,
+                            senderId: senderId,
+                            receiverId: user.id,
+                            smsSid: result.sid,
+                            smsStatus: result.result?.status, // Use status from Twilio result
+                            sentVia: 'sms',
+                            direction: 'OUTBOUND',
+                            isRead: true
+                        }
+                    });
+                } else {
+                    failedCount++;
                 }
-            });
-        }
 
-        // Throttle to respect Twilio rate limits (1 second between sends)
-        if (i < recipients.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+                // Periodically update progress (every 5 messages or at the end)
+                if ((i + 1) % 5 === 0 || i === recipients.length - 1) {
+                    await prisma.sMSCampaign.update({
+                        where: { id: campaignId },
+                        data: { 
+                            successCount, 
+                            failedCount,
+                            status: i === recipients.length - 1 ? 'COMPLETED' : 'PROCESSING'
+                        }
+                    });
+                }
+
+                // Throttle to respect Twilio rate limits (1 second between sends)
+                if (i < recipients.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            } catch (innerError) {
+                console.error(`Error processing recipient ${recipients[i]?.id}:`, innerError);
+                failedCount++;
+            }
         }
+    } catch (fatalError) {
+        console.error(`Fatal error in campaign ${campaignId}:`, fatalError);
+        await prisma.sMSCampaign.update({
+            where: { id: campaignId },
+            data: { status: 'FAILED' }
+        }).catch(err => console.error("Could not update campaign to failed", err));
     }
 };
 

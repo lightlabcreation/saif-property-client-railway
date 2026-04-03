@@ -16,17 +16,17 @@ exports.authenticate = async (req, res, next) => {
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         
-        // Phase 2: Check if user is still active in the database
+        // Forced Logout: Check if user is still active in the database
         const user = await prisma.user.findUnique({
-            where: { id: decoded.id },
-            select: { isActive: true, role: true }
+            where: { id: decoded.id }
         });
 
         if (!user || !user.isActive) {
             return res.status(401).json({ message: 'Access revoked' });
         }
 
-        req.user = decoded;
+        // Attach DB user to ensure current roles/status are used
+        req.user = user;
         next();
     } catch (err) {
         console.error('JWT Verification Error:', err.message);

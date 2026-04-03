@@ -133,27 +133,27 @@ exports.createInvoice = async (req, res) => {
             return res.status(400).json({ message: 'Tenant ID and Unit ID are required' });
         }
 
-        // 1. Find Active Lease for this tenant and unit
-        const activeLease = await prisma.lease.findFirst({
+        // 1. Find the lease for this tenant and unit (can be Active or even a past lease for billing)
+        const lease = await prisma.lease.findFirst({
             where: {
                 tenantId: parseInt(tenantId),
-                unitId: parseInt(unitId),
-                status: 'Active'
+                unitId: parseInt(unitId)
             },
+            orderBy: { endDate: 'desc' }, // Latest lease first
             include: { unit: true, tenant: true }
         });
 
-        if (!activeLease) {
-            return res.status(400).json({ message: 'Invoices can only be generated for ACTIVE leases.' });
+        if (!lease) {
+            return res.status(400).json({ message: 'No lease found for this tenant and unit.' });
         }
 
         // Determine who to bill: If tenant is a RESIDENT, bill their Parent
         let billableTenantId = parseInt(tenantId);
-        if (activeLease.tenant.type === 'RESIDENT') {
-            if (!activeLease.tenant.parentId) {
+        if (lease.tenant.type === 'RESIDENT') {
+            if (!lease.tenant.parentId) {
                 return res.status(400).json({ message: 'Resident has no billable parent assigned.' });
             }
-            billableTenantId = activeLease.tenant.parentId;
+            billableTenantId = lease.tenant.parentId;
         }
 
         // Note: RESIDENT is not a tenant type - only INDIVIDUAL and COMPANY are valid tenant types
@@ -173,7 +173,7 @@ exports.createInvoice = async (req, res) => {
         // If creating a rent invoice, ensure it matches the lease
         let finalRent = rentAmt;
         if (rentAmt > 0) {
-            finalRent = parseFloat(activeLease.monthlyRent) || 0;
+            finalRent = parseFloat(lease.monthlyRent) || 0;
         }
 
         const totalAmount = finalRent + feesAmt;
@@ -187,8 +187,8 @@ exports.createInvoice = async (req, res) => {
                 invoiceNo,
                 tenantId: billableTenantId,
                 unitId: parseInt(unitId),
-                leaseId: activeLease.id,
-                leaseType: activeLease.unit.rentalMode,
+                leaseId: lease.id,
+                leaseType: lease.unit.rentalMode,
                 month,
                 rent: finalRent,
                 serviceFees: feesAmt,

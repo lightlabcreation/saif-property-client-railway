@@ -11,26 +11,28 @@ const allowedOrigins = require('../../config/allowedOrigins');
 // GET /api/admin/tenants
 exports.getAllTenants = async (req, res) => {
     try {
-        const { propertyId, search, page = 1, limit = 10 } = req.query;
+        const { propertyId, search, page = 1, limit = 10, includePast } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
         const take = parseInt(limit);
 
         const whereClause = { role: 'TENANT' }; // Show all tenants including residents as requested
 
         if (propertyId) {
+            const pId = parseInt(propertyId);
             whereClause.OR = [
                 {
                     leases: {
                         some: {
-                            status: { in: ['Active', 'DRAFT'] },
-                            unit: { propertyId: parseInt(propertyId) }
+                            unit: { propertyId: pId }
                         }
                     }
                 },
                 {
-                    buildingId: parseInt(propertyId)
+                    buildingId: pId
                 }
             ];
+            
+            // If we don't care about "Active" only, ensure we don't accidentally filter by other things later
         }
 
         if (search) {
@@ -83,7 +85,6 @@ exports.getAllTenants = async (req, res) => {
                     building: true,
                     unit: { include: { property: true } },
                     leases: {
-                        where: { status: { in: ['Active', 'DRAFT'] } },
                         include: {
                             unit: {
                                 include: {
@@ -100,16 +101,13 @@ exports.getAllTenants = async (req, res) => {
                                 include: { unit: true }
                             },
                             leases: {
-                                where: { status: { in: ['Active', 'DRAFT'] } },
                                 include: { unit: true }
                             }
                         }
                     },
                     parent: {
                         include: {
-                            leases: {
-                                where: { status: { in: ['Active', 'DRAFT'] } }
-                            }
+                            leases: true
                         }
                     },
                     companyContacts: true,
@@ -153,13 +151,17 @@ exports.getAllTenants = async (req, res) => {
         const unitMap = new Map(units.map(u => [u.id, u]));
 
         const formatted = tenants.map(t => {
-            // Find active lease first
+            // Find active lease first, fallback to most recent inactive one for billing history
             let activeLease = t.leases.find(l => l.status === 'Active') ||
                 (t.residentLease?.status === 'Active' ? t.residentLease : null) ||
                 t.leases.find(l => l.status === 'DRAFT') ||
                 (t.residentLease?.status === 'DRAFT' ? t.residentLease : null);
+            
+            // If No Active Lease, find the last one they had (Broken/Expired/etc)
+            if (!activeLease && t.leases.length > 0) {
+                activeLease = [...t.leases].sort((a,b) => new Date(b.endDate) - new Date(a.endDate))[0];
+            }
 
-            // If no lease, check if they are a resident assigned to a unit
             // Find property name from any available source
             let propName = t.building?.name || t.unit?.property?.name || activeLease?.unit?.property?.name || 'No Property';
             let uName = t.unit?.unitNumber || t.unit?.name || activeLease?.unit?.name || 'No Unit';
