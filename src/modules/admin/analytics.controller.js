@@ -33,7 +33,7 @@ exports.getRevenueStats = async (req, res) => {
         const projectedRevenue = parseFloat(leaseAgg._sum.monthlyRent) || 0;
 
         // Fetch all paid invoices for Actual Revenue and breakdowns
-        const [invoices, refunds] = await Promise.all([
+        const [invoices, refunds, allocations] = await Promise.all([
           prisma.invoice.findMany({
               where: {
                   paidAmount: { gt: 0 },
@@ -47,6 +47,13 @@ exports.getRevenueStats = async (req, res) => {
                   unit: unitFilter
               },
               include: { unit: { include: { property: true } } }
+          }),
+          prisma.payment.findMany({
+            where: {
+              method: 'Security Deposit Allocation',
+              invoice: { unit: unitFilter }
+            },
+            include: { invoice: { include: { unit: { include: { property: true } } } } }
           })
         ]);
 
@@ -69,15 +76,15 @@ exports.getRevenueStats = async (req, res) => {
             actualRevenue += amount;
 
             const desc = (inv.description || '').toLowerCase();
+            const category = (inv.category || '').toUpperCase();
             let type = 'Rent';
-            if (inv.category === 'SERVICE') {
-                if (desc.includes('deposit')) {
-                    type = 'Deposit';
-                    actualDeposit += amount;
-                } else {
-                    type = 'ServiceFees';
-                    actualServiceFees += amount;
-                }
+
+            if (category === 'SECURITY_DEPOSIT' || desc.includes('deposit')) {
+                type = 'Deposit';
+                actualDeposit += amount;
+            } else if (category === 'SERVICE') {
+                type = 'ServiceFees';
+                actualServiceFees += amount;
             } else {
                 actualRent += amount;
             }
@@ -108,12 +115,12 @@ exports.getRevenueStats = async (req, res) => {
 
         // Subtract refunds from totals and breakdowns
         refunds.forEach(ref => {
-          const amount = parseFloat(ref.amount) || 0;
+          const amount = Math.abs(parseFloat(ref.amount)) || 0;
           actualRevenue -= amount;
           
           let type = 'Rent';
           const rType = ref.type.toLowerCase();
-          if (rType.includes('deposit')) {
+          if (rType.includes('deposit') || rType.includes('deduction')) {
             type = 'Deposit';
             actualDeposit -= amount;
           } else if (rType.includes('adjustment')) {
@@ -145,6 +152,27 @@ exports.getRevenueStats = async (req, res) => {
             if (type === 'Rent') propertyMap[propName].monthly[mon].rent -= amount;
             else if (type === 'Deposit') propertyMap[propName].monthly[mon].deposit -= amount;
             else if (type === 'ServiceFees') propertyMap[propName].monthly[mon].serviceFees -= amount;
+          }
+        });
+
+        // Subtract Allocations from the "Deposit" pool (they already moved to Rent/ServiceFees via invoices)
+        allocations.forEach(alloc => {
+          const amount = parseFloat(alloc.amount) || 0;
+          // We don't subtract from actualRevenue because allocations are internal transfers
+          actualDeposit -= amount;
+
+          const propName = alloc.invoice?.unit?.property?.name || 'Other Building';
+          if (propertyMap[propName]) {
+            propertyMap[propName].deposit -= amount;
+          }
+
+          // Important: Subtract from the month of the allocation
+          const mon = getMonthKey(alloc.date);
+          if (monthlyMap[mon]) {
+            monthlyMap[mon].deposit -= amount;
+          }
+          if (propertyMap[propName] && propertyMap[propName].monthly[mon]) {
+            propertyMap[propName].monthly[mon].deposit -= amount;
           }
         });
 

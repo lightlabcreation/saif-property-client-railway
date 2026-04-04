@@ -79,7 +79,7 @@ exports.createRefund = async (req, res) => {
                     status: { in: ['Completed', 'Issued'] }
                 }
             });
-            const totalRefundedAlready = existingRefunds.reduce((sum, r) => sum + parseFloat(r.amount || 0), 0);
+            const totalRefundedAlready = existingRefunds.reduce((sum, r) => sum + Math.abs(parseFloat(r.amount || 0)), 0);
             const availableDeposit = Math.max(0, totalDepositPaid - totalRefundedAlready);
 
             const requestedAmount = parseFloat(amount) || 0;
@@ -168,9 +168,8 @@ exports.createRefund = async (req, res) => {
 
             // 5. Final Ledger for Cash Refund if applicable
             if (status === 'Completed' && type.toLowerCase().includes('refund')) {
-                // If there's still a net amount being physically refunded
-                const totalAllocated = (allocations || []).reduce((sum, a) => sum + parseFloat(a.amount), 0);
-                const cashRefunded = requestedAmount - totalAllocated;
+                // The stored 'amount' represents the CASH part now
+                const cashRefunded = requestedAmount;
 
                 if (cashRefunded > 0) {
                     const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
@@ -252,7 +251,7 @@ exports.updateRefund = async (req, res) => {
 
             // Ledger Entry (Accounting Requirement) - Only if moving TO Completed
             if (status === 'Completed' && current.status !== 'Completed') {
-                const refundamt = parseFloat(amount || updatedRefund.amount) || 0;
+                const refundamt = Math.abs(parseFloat(amount || updatedRefund.amount)) || 0;
                 const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
                 const prevBalance = lastTx ? parseFloat(lastTx.balance) : 0;
 
@@ -328,15 +327,26 @@ exports.calculateRefund = async (req, res) => {
 
         const totalDepositPaid = depositInvoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount || 0), 0);
 
-        // 2. Subtract existing refunds already processed
+        // 2. Subtract ALL existing refund records (CASH part)
         const existingRefunds = await prisma.refundAdjustment.findMany({
             where: {
                 tenantId,
                 status: { in: ['Completed', 'Issued'] }
             }
         });
-        const totalRefundedAlready = existingRefunds.reduce((sum, r) => sum + parseFloat(r.amount || 0), 0);
-        const availableDeposit = Math.max(0, totalDepositPaid - totalRefundedAlready);
+        const totalRefundedInCash = existingRefunds.reduce((sum, r) => sum + Math.abs(parseFloat(r.amount || 0)), 0);
+
+        // 3. Subtract ALL existing allocations (DEDUCTION part)
+        const existingAllocations = await prisma.payment.findMany({
+            where: {
+                invoice: { tenantId },
+                method: 'Security Deposit Allocation'
+            }
+        });
+        const totalAllocatedSoFar = existingAllocations.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+
+        // TRUE Available Cash = Total Paid - Total Refunds - Total Deductions
+        const availableDeposit = Math.max(0, totalDepositPaid - totalRefundedInCash - totalAllocatedSoFar);
 
         // 3. Get Outstanding Invoices (Priority: Service first, then Rent)
         const outstandingInvoices = await prisma.invoice.findMany({
@@ -395,7 +405,7 @@ exports.calculateRefund = async (req, res) => {
         res.json({
             tenantId,
             totalDepositPaid,
-            totalRefundedAlready,
+            totalRefundedAlready: totalRefundedInCash,
             availableDeposit,
             totalDeductions,
             finalRefundAmount,
