@@ -158,11 +158,13 @@ exports.getRevenueStats = async (req, res) => {
         // Subtract Allocations from the "Deposit" pool (they already moved to Rent/ServiceFees via invoices)
         allocations.forEach(alloc => {
           const amount = parseFloat(alloc.amount) || 0;
-          // We don't subtract from actualRevenue because allocations are internal transfers
+          // Subtract from actualRevenue to prevent double-counting (since it's already in the target invoice's paidAmount)
+          actualRevenue -= amount;
           actualDeposit -= amount;
 
           const propName = alloc.invoice?.unit?.property?.name || 'Other Building';
           if (propertyMap[propName]) {
+            propertyMap[propName].amount -= amount;
             propertyMap[propName].deposit -= amount;
           }
 
