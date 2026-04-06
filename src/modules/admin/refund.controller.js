@@ -64,11 +64,11 @@ exports.createRefund = async (req, res) => {
             const depositInvoices = await tx.invoice.findMany({
                 where: {
                     tenantId: parseInt(tenantId),
-                    status: 'paid',
                     OR: [
                         { category: 'SECURITY_DEPOSIT' },
                         { description: { contains: 'Security Deposit' } }
-                    ]
+                    ],
+                    paidAmount: { gt: 0 } // Any money paid is refundable
                 }
             });
             const totalDepositPaid = depositInvoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount || 0), 0);
@@ -296,32 +296,15 @@ exports.calculateRefund = async (req, res) => {
     try {
         const tenantId = parseInt(req.params.tenantId);
 
-        // Security Guard: Check if lease has actually Ended/Expired
-        const lease = await prisma.lease.findFirst({
-            where: {
-                tenantId,
-                status: { in: ['Expired', 'Ended'] }
-            }
-        });
-
-        if (!lease) {
-            // If no ended lease, we don't permit system-calculated allocations
-            return res.json({ 
-                availableDeposit: 0, 
-                proposedAllocations: [], 
-                message: "System calculation disabled: No Ended/Expired lease found for this tenant." 
-            });
-        }
-
         // 1. Get Paid Security Deposits
         const depositInvoices = await prisma.invoice.findMany({
             where: {
                 tenantId,
-                status: 'paid',
                 OR: [
                     { category: 'SECURITY_DEPOSIT' },
                     { description: { contains: 'Security Deposit' } }
-                ]
+                ],
+                paidAmount: { gt: 0 }
             }
         });
 
@@ -347,6 +330,25 @@ exports.calculateRefund = async (req, res) => {
 
         // TRUE Available Cash = Total Paid - Total Refunds - Total Deductions
         const availableDeposit = Math.max(0, totalDepositPaid - totalRefundedInCash - totalAllocatedSoFar);
+
+        // Security Guard: Check if lease has actually Ended/Expired for AUTO-ALLOCATION
+        const hasEndedLease = await prisma.lease.findFirst({
+            where: {
+                tenantId,
+                status: { in: ['Expired', 'Ended'] }
+            }
+        });
+
+        if (!hasEndedLease) {
+            // Return only balance, no proposed allocations
+            return res.json({ 
+                tenantId,
+                totalDepositPaid,
+                availableDeposit,
+                proposedAllocations: [], 
+                message: "Manual Adjustment Mode: Lease is still Active. Automatic priority deductions (Rent/Fees) are disabled until lease ends." 
+            });
+        }
 
         // 3. Get Outstanding Invoices (Priority: Service first, then Rent)
         const outstandingInvoices = await prisma.invoice.findMany({

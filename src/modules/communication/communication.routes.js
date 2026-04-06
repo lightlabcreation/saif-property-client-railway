@@ -23,6 +23,8 @@ router.delete('/templates/:id', checkPermission('Templates', 'delete'), smsContr
 router.post('/campaign', checkPermission('Campaign Manager', 'add'), smsController.createCampaign);
 router.get('/campaigns', checkPermission('Campaign Manager', 'view'), smsController.getCampaigns);
 router.delete('/campaign/:id', checkPermission('Campaign Manager', 'delete'), smsController.deleteCampaign);
+router.post('/campaign/:id/retry', checkPermission('Campaign Manager', 'edit'), smsController.retryCampaign);
+router.get('/campaign/:id/failures', checkPermission('Campaign Manager', 'view'), smsController.getCampaignFailures);
 router.get('/unread-stats', checkPermission('Inbox', 'view'), smsController.getUnreadStats);
 
 module.exports = router;

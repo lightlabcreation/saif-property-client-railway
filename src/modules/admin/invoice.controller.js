@@ -60,7 +60,9 @@ exports.getInvoices = async (req, res) => {
                 tenant: {
                     include: { leases: true }
                 },
-                unit: true,
+                unit: {
+                    include: { property: true }
+                },
                 lease: true // Include lease to check rentAmount
             },
             orderBy: { createdAt: 'desc' }
@@ -99,6 +101,7 @@ exports.getInvoices = async (req, res) => {
                 invoiceNo: inv.invoiceNo,
                 tenantId: inv.tenantId,
                 unitId: inv.unitId,
+                propertyId: inv.unit?.propertyId || inv.unit?.property?.id || null,
                 tenant: inv.tenant?.name || (inv.tenant?.firstName ? `${inv.tenant.firstName} ${inv.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
                 unit: inv.unit.name,
                 month: inv.month,

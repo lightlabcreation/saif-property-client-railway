@@ -260,10 +260,10 @@ exports.getDashboardStats = async (req, res) => {
             }
         });
 
-        // 9. Deposits Pending Refund (Expired Leases with Paid Deposit & No Finished Refund)
+        // 9. Deposits Pending Refund (Expired Leases with any Paid Deposit & No Finished Refund)
         const pendingRefundsRaw = await prisma.invoice.findMany({
             where: {
-                status: 'paid',
+                paidAmount: { gt: 0 },
                 OR: [
                     { category: 'SECURITY_DEPOSIT' },
                     { description: { contains: 'Security Deposit' } }

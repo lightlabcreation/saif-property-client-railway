@@ -225,3 +225,151 @@ exports.deleteCampaign = async (req, res) => {
         res.status(500).json({ error: 'Failed to delete campaign' });
     }
 };
+
+/**
+ * Retry or Resume a stuck/failed campaign
+ */
+exports.retryCampaign = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const campaign = await prisma.sMSCampaign.findUnique({
+            where: { id: parseInt(id) }
+        });
+
+        if (!campaign) {
+            return res.status(404).json({ error: 'Campaign not found' });
+        }
+
+        // 1. IMPROVED CONTENT SEARCH: Find a message actually sent by this campaign attempt
+        const originalMessage = await prisma.message.findFirst({
+            where: { 
+                senderId: campaign.senderId,
+                createdAt: { gte: campaign.createdAt },
+                sentVia: 'sms'
+            },
+            orderBy: { createdAt: 'asc' }
+        });
+
+        const content = originalMessage?.content || "Resending broadcast...";
+
+        // 2. RESET COUNTS
+        await prisma.sMSCampaign.update({
+            where: { id: campaign.id },
+            data: { 
+                status: 'PENDING',
+                successCount: 0,
+                failedCount: 0 
+            }
+        });
+
+        // 3. RE-FETCH ALL POSSIBLE RECIPIENTS (Matching createCampaign logic exactly)
+        let whereClause = { isActive: true };
+        if (campaign.buildingId) {
+            whereClause.buildingId = campaign.buildingId;
+            whereClause.role = 'TENANT';
+        } else {
+            whereClause.role = { in: ['TENANT', 'COWORKER'] };
+        }
+
+        const allRecipients = await prisma.user.findMany({ 
+            where: whereClause,
+            include: { unit: true, building: true },
+            take: campaign.totalRecipients // Safety cap
+        });
+
+        // 4. THE "SMART" FILTER: Find who ALREADY received a message from this campaign
+        const sentToUserIds = await prisma.message.findMany({
+            where: {
+                senderId: campaign.senderId,
+                createdAt: { gte: campaign.createdAt },
+                sentVia: 'sms'
+            },
+            select: { receiverId: true }
+        }).then(msgs => msgs.map(m => m.receiverId));
+
+        const retryRecipients = allRecipients.filter(r => !sentToUserIds.includes(r.id));
+
+        if (retryRecipients.length === 0) {
+            // All were already sent?
+            await prisma.sMSCampaign.update({
+                where: { id: campaign.id },
+                data: { 
+                    status: 'COMPLETED',
+                    successCount: campaign.totalRecipients 
+                }
+            });
+            return res.json({ success: true, message: 'All recipients already reached' });
+        }
+
+        // 5. UPDATE PROGRESS TO REFLECT WHAT WAS ALREADY DONE
+        await prisma.sMSCampaign.update({
+            where: { id: campaign.id },
+            data: { 
+                status: 'PENDING',
+                successCount: sentToUserIds.length,
+                failedCount: 0 
+            }
+        });
+
+        // 6. TRIGGER (only for the missing ones)
+        smsService.processCampaign(retryRecipients, content, campaign.id).catch(err => {
+            console.error(`Fatal error in smart campaign resume ${campaign.id}:`, err);
+        });
+
+        res.json({ success: true, message: `Resuming for remaining ${retryRecipients.length} recipients` });
+    } catch (error) {
+        console.error('Error retrying SMS campaign:', error);
+        res.status(500).json({ error: 'Failed to retry campaign' });
+    }
+};
+
+/**
+ * Get detailed list of recipients who haven't received the campaign yet
+ */
+exports.getCampaignFailures = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const campaign = await prisma.sMSCampaign.findUnique({ where: { id: parseInt(id) } });
+
+        if (!campaign) {
+            return res.status(404).json({ error: 'Campaign not found' });
+        }
+
+        // Fetch all intended recipients
+        let whereClause = { isActive: true };
+        if (campaign.buildingId) {
+            whereClause.buildingId = campaign.buildingId;
+            whereClause.role = 'TENANT';
+        } else {
+            whereClause.role = { in: ['TENANT', 'COWORKER'] };
+        }
+
+        const allRecipients = await prisma.user.findMany({ 
+            where: whereClause,
+            select: { id: true, name: true, phone: true },
+            take: campaign.totalRecipients
+        });
+
+        // Find who already got it
+        const sentToUserIds = await prisma.message.findMany({
+            where: {
+                senderId: campaign.senderId,
+                createdAt: { gte: campaign.createdAt },
+                sentVia: 'sms'
+            },
+            select: { receiverId: true }
+        }).then(msgs => msgs.map(m => m.receiverId));
+
+        const failures = allRecipients.filter(r => !sentToUserIds.includes(r.id));
+
+        res.json({ 
+            success: true, 
+            failures, 
+            totalIntended: allRecipients.length,
+            currentlyReached: sentToUserIds.length 
+        });
+    } catch (error) {
+        console.error('Error fetching campaign report:', error);
+        res.status(500).json({ error: 'Failed to fetch report' });
+    }
+};

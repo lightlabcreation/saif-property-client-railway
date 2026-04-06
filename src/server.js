@@ -31,6 +31,16 @@ async function startServer() {
             console.log(`✅ Synced ${oldTypes.length} backward items successfully.`);
         }
 
+        // 🛡️ RECOVERY: Mark any 'stuck' SMS campaigns from previous crashes
+        console.log('🛡️  Scanning for stuck SMS campaigns...');
+        const stuckCount = await prisma.sMSCampaign.updateMany({
+            where: { status: 'PROCESSING' },
+            data: { status: 'STUCK' }
+        });
+        if (stuckCount.count > 0) {
+            console.log(`✅ Recovered ${stuckCount.count} stuck campaigns.`);
+        }
+
         app.listen(PORT, () => {
             console.log(`🚀 Server running on port ${PORT}`);
         });

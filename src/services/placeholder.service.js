@@ -53,11 +53,13 @@ class PlaceholderService {
             }, 0);
 
             const data = {
+                name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Valued Recipient',
+                tenantName: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim(),
                 tenantFirstName: user.firstName || '',
                 tenantLastName: user.lastName || '',
                 tenantFullName: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-                buildingName: activeLease?.unit?.property?.name || user.unit?.property?.name || user.building?.name || '',
-                unitNumber: activeLease?.unit?.unitNumber || activeLease?.unit?.name || user.unit?.unitNumber || '',
+                buildingName: activeLease?.unit?.property?.name || user.unit?.property?.name || user.building?.name || 'N/A',
+                unitNumber: activeLease?.unit?.unitNumber || activeLease?.unit?.name || user.unit?.unitNumber || 'N/A',
                 bedroomNumber: activeLease?.bedroom?.bedroomNumber || 'N/A',
                 leaseEndDate: activeLease?.endDate ? new Date(activeLease.endDate).toLocaleDateString() : 'N/A',
                 rentAmount: activeLease?.monthlyRent ? `$${parseFloat(activeLease.monthlyRent).toFixed(2)}` : '$0.00',
@@ -65,6 +67,7 @@ class PlaceholderService {
                 depositBalance: activeLease?.securityDeposit ? `$${parseFloat(activeLease.securityDeposit).toFixed(2)}` : '$0.00',
                 moveOutDate: activeLease?.endDate ? new Date(activeLease.endDate).toLocaleDateString() : 'N/A',
                 insuranceExpiryDate: activeInsurance?.endDate ? new Date(activeInsurance.endDate).toLocaleDateString() : 'N/A',
+                link: process.env.PORTAL_URL || 'https://portal.campushabitations.com',
                 month: new Date().toLocaleDateString('en-US', { month: 'long' }),
                 year: new Date().getFullYear().toString()
             };

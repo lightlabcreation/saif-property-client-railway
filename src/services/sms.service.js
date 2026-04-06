@@ -76,12 +76,11 @@ exports.sendSMS = async (to, message) => {
  */
 exports.processCampaign = async (recipients, templateContent, campaignId) => {
     try {
-        let successCount = 0;
-        let failedCount = 0;
-
-        // Fetch campaign once to get senderId
         const campaign = await prisma.sMSCampaign.findUnique({ where: { id: campaignId } });
         if (!campaign) throw new Error("Campaign not found");
+        
+        let successCount = campaign.successCount || 0;
+        let failedCount = campaign.failedCount || 0;
         const senderId = campaign.senderId;
 
         // Update status to PROCESSING

@@ -90,33 +90,36 @@ exports.getOutstandingDues = async (req, res) => {
 
 exports.getReceivedPayments = async (req, res) => {
     try {
-        const payments = await prisma.invoice.findMany({
-            where: {
-                status: 'paid'
-            },
+        const payments = await prisma.payment.findMany({
             include: {
-                tenant: true,
-                unit: true
+                invoice: {
+                    include: {
+                        tenant: true,
+                        unit: true
+                    }
+                }
             },
             orderBy: {
-                paidAt: 'desc'
+                date: 'desc'
             }
         });
 
-        const formattedPayments = payments.map(payment => {
+        const formattedPayments = payments.map(p => {
+            const inv = p.invoice;
             return {
-                id: payment.invoiceNo,
-                tenantId: payment.tenantId,
-                unitId: payment.unitId,
-                tenant: payment.tenant?.name || (payment.tenant?.firstName ? `${payment.tenant.firstName} ${payment.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
-                unit: payment.unit.name,
-                type: payment.unit.rentalMode === 'FULL_UNIT' ? 'Full Unit' : 'Bedroom',
-                amount: parseFloat(payment.amount),
-                method: payment.paymentMethod || 'N/A',
-                date: payment.paidAt ? new Date(payment.paidAt).toLocaleDateString('en-GB', {
+                id: inv?.invoiceNo || `PAY-${p.id}`,
+                paymentId: p.id,
+                tenantId: inv?.tenantId,
+                unitId: inv?.unitId,
+                tenant: inv?.tenant?.name || (inv?.tenant?.firstName ? `${inv.tenant.firstName} ${inv.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
+                unit: inv?.unit?.name || 'Unknown Unit',
+                type: inv?.unit?.rentalMode === 'FULL_UNIT' ? 'Full Unit' : 'Bedroom',
+                amount: parseFloat(p.amount), // Correctly shows the ACTUAL payment amount
+                method: p.method || 'N/A',
+                date: p.date ? new Date(p.date).toLocaleDateString('en-GB', {
                     day: '2-digit', month: 'short', year: 'numeric'
                 }) : '-',
-                status: 'Paid' // Since we filtered by 'paid'
+                status: 'Paid'
             };
         });
 
