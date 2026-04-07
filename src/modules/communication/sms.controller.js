@@ -105,11 +105,12 @@ exports.createCampaign = async (req, res) => {
             isActive: true
         };
 
-        if (recipientType === 'COWORKERS') {
+        if (req.body.recipientIds && Array.isArray(req.body.recipientIds)) {
+             whereClause.id = { in: req.body.recipientIds.map(id => parseInt(id)) };
+        } else if (recipientType === 'COWORKERS') {
             whereClause.role = 'COWORKER';
         } else if (recipientType === 'ALL') {
              // Handle ALL: (Tenant in Building) OR (Coworker)
-             // For simple prisma query, we can do multiple fetches or a complex OR
              whereClause.role = { in: ['TENANT', 'COWORKER'] };
         } else {
             // Default: TENANTS
@@ -137,6 +138,7 @@ exports.createCampaign = async (req, res) => {
                 name,
                 senderId,
                 buildingId: buildingId ? parseInt(buildingId) : null,
+                recipientIds: Array.isArray(req.body.recipientIds) ? req.body.recipientIds.join(',') : null,
                 totalRecipients: recipients.length,
                 status: 'PENDING'
             }
@@ -262,20 +264,29 @@ exports.retryCampaign = async (req, res) => {
             }
         });
 
-        // 3. RE-FETCH ALL POSSIBLE RECIPIENTS (Matching createCampaign logic exactly)
-        let whereClause = { isActive: true };
-        if (campaign.buildingId) {
-            whereClause.buildingId = campaign.buildingId;
-            whereClause.role = 'TENANT';
+        // 3. RE-FETCH ALL POSSIBLE RECIPIENTS (Checking for custom selection first)
+        let allRecipients = [];
+        if (campaign.recipientIds) {
+            const ids = campaign.recipientIds.split(',').map(id => parseInt(id)).filter(id => !isNaN(id));
+            allRecipients = await prisma.user.findMany({
+                where: { id: { in: ids }, isActive: true },
+                include: { unit: true, building: true }
+            });
         } else {
-            whereClause.role = { in: ['TENANT', 'COWORKER'] };
-        }
+            let whereClause = { isActive: true };
+            if (campaign.buildingId) {
+                whereClause.buildingId = campaign.buildingId;
+                whereClause.role = 'TENANT';
+            } else {
+                whereClause.role = { in: ['TENANT', 'COWORKER'] };
+            }
 
-        const allRecipients = await prisma.user.findMany({ 
-            where: whereClause,
-            include: { unit: true, building: true },
-            take: campaign.totalRecipients // Safety cap
-        });
+            allRecipients = await prisma.user.findMany({ 
+                where: whereClause,
+                include: { unit: true, building: true },
+                take: campaign.totalRecipients // Safety cap
+            });
+        }
 
         // 4. THE "SMART" FILTER: Find who ALREADY received a message from this campaign
         const sentToUserIds = await prisma.message.findMany({
@@ -335,20 +346,29 @@ exports.getCampaignFailures = async (req, res) => {
             return res.status(404).json({ error: 'Campaign not found' });
         }
 
-        // Fetch all intended recipients
-        let whereClause = { isActive: true };
-        if (campaign.buildingId) {
-            whereClause.buildingId = campaign.buildingId;
-            whereClause.role = 'TENANT';
+        // Fetch all intended recipients (Check for custom selection first)
+        let allRecipients = [];
+        if (campaign.recipientIds) {
+            const ids = campaign.recipientIds.split(',').map(id => parseInt(id)).filter(id => !isNaN(id));
+            allRecipients = await prisma.user.findMany({
+                where: { id: { in: ids }, isActive: true },
+                select: { id: true, name: true, phone: true }
+            });
         } else {
-            whereClause.role = { in: ['TENANT', 'COWORKER'] };
-        }
+            let whereClause = { isActive: true };
+            if (campaign.buildingId) {
+                whereClause.buildingId = campaign.buildingId;
+                whereClause.role = 'TENANT';
+            } else {
+                whereClause.role = { in: ['TENANT', 'COWORKER'] };
+            }
 
-        const allRecipients = await prisma.user.findMany({ 
-            where: whereClause,
-            select: { id: true, name: true, phone: true },
-            take: campaign.totalRecipients
-        });
+            allRecipients = await prisma.user.findMany({ 
+                where: whereClause,
+                select: { id: true, name: true, phone: true },
+                take: campaign.totalRecipients
+            });
+        }
 
         // Find who already got it
         const sentToUserIds = await prisma.message.findMany({

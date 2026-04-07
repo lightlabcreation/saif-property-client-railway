@@ -249,22 +249,79 @@ exports.updateRefund = async (req, res) => {
                 }
             });
 
+            // Process Allocations if status is moving TO Completed
+            if (status === 'Completed' && current.status !== 'Completed' && req.body.allocations && Array.isArray(req.body.allocations)) {
+                for (const allocation of req.body.allocations) {
+                    const invoice = await tx.invoice.findUnique({ where: { id: allocation.invoiceId } });
+                    if (!invoice) continue;
+
+                    const allocAmount = parseFloat(allocation.amount);
+                    const newPaidAmount = parseFloat(invoice.paidAmount) + allocAmount;
+                    const newBalanceDue = Math.max(0, parseFloat(invoice.amount) - newPaidAmount);
+
+                    // Update Invoice
+                    await tx.invoice.update({
+                        where: { id: invoice.id },
+                        data: {
+                            paidAmount: newPaidAmount,
+                            balanceDue: newBalanceDue,
+                            status: newBalanceDue <= 0 ? 'paid' : 'partial',
+                            paidAt: newBalanceDue <= 0 ? new Date() : undefined
+                        }
+                    });
+
+                    // Create Payment Record
+                    await tx.payment.create({
+                        data: {
+                            invoiceId: invoice.id,
+                            amount: allocAmount,
+                            method: 'Security Deposit Allocation',
+                            reference: id,
+                            date: new Date()
+                        }
+                    });
+
+                    // Accounting Ledger: Deduction from Liability
+                    const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
+                    const prevBalance = lastTx ? parseFloat(lastTx.balance) : 0;
+                    
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(),
+                            description: `SD Allocation: ${invoice.invoiceNo} (${invoice.category})`,
+                            type: 'Liability Deduction',
+                            amount: allocAmount,
+                            balance: prevBalance - allocAmount,
+                            status: 'Completed',
+                            invoiceId: invoice.id
+                        }
+                    });
+                }
+            }
+
             // Ledger Entry (Accounting Requirement) - Only if moving TO Completed
             if (status === 'Completed' && current.status !== 'Completed') {
                 const refundamt = Math.abs(parseFloat(amount || updatedRefund.amount)) || 0;
-                const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
-                const prevBalance = lastTx ? parseFloat(lastTx.balance) : 0;
-
-                await tx.transaction.create({
-                    data: {
-                        date: new Date(),
-                        description: `${updatedRefund.type} Refund - ${id}`,
-                        type: updatedRefund.type.toLowerCase().includes('deposit') ? 'Liability' : 'Expense',
-                        amount: refundamt,
-                        balance: prevBalance - refundamt,
-                        status: 'Completed'
-                    }
+                
+                const existingTx = await tx.transaction.findFirst({
+                    where: { description: { contains: id } }
                 });
+
+                if (!existingTx) {
+                    const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
+                    const prevBalance = lastTx ? parseFloat(lastTx.balance) : 0;
+
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(),
+                            description: `${updatedRefund.type} Refund - ${id}`,
+                            type: updatedRefund.type.toLowerCase().includes('deposit') ? 'Liability' : 'Expense',
+                            amount: refundamt,
+                            balance: prevBalance - refundamt,
+                            status: 'Completed'
+                        }
+                    });
+                }
             }
 
             return updatedRefund;

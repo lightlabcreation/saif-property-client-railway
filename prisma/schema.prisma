@@ -526,6 +526,7 @@ model SMSCampaign {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   buildingId     Int?
+  recipientIds   String?  @db.Text // Comma-separated user IDs for custom selections
   
   @@map("smscampaign")
 }
