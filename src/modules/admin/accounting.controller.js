@@ -27,11 +27,55 @@ exports.getTransactions = async (req, res) => {
                 type: t.type,
                 amount: parseFloat(t.amount),
                 balance: parseFloat(t.balance),
-                status: t.status
+                status: t.status,
+                paymentId: t.paymentId,
+                invoiceId: t.invoiceId
             };
         });
 
-        res.json(formatted);
+        // 🟢 SMART FILTER: UNIQUE RECORDS ONLY
+        const seenPayments = new Set();
+        const seenRefunds = new Set();
+        const seenInvoices = new Set();
+        
+        // 1. Remove exact system duplicates
+        const uniqueTxs = formatted.filter(t => {
+            // Deduplicate Payments (Same paymentId)
+            if (t.paymentId) {
+                if (seenPayments.has(t.paymentId)) return false;
+                seenPayments.add(t.paymentId);
+            }
+            
+            // Deduplicate Refunds/Adjustments (Same Request ID in description)
+            const refundRef = t.description.match(/REG-\d+|REF-\d+|ADJ-\d+/);
+            if (refundRef) {
+                const id = refundRef[0];
+                if (seenRefunds.has(id)) return false;
+                seenRefunds.add(id);
+            }
+
+            return true;
+        });
+
+        // 2. RE-CALCULATE BALANCES (Top-Down to ensure logic is perfect)
+        // Note: Ledger is sorted by date DESC (Latest at [0])
+        // We calculate bottom-up for the current batch
+        let runningBalance = uniqueTxs.length > 0 ? (uniqueTxs[uniqueTxs.length - 1].balance || 0) : 0;
+        for (let i = uniqueTxs.length - 2; i >= 0; i--) {
+            const t = uniqueTxs[i];
+            const prev = uniqueTxs[i + 1];
+            
+            // If it's an INCOME/Payment, balance increases. If it's a LIABILITY/Refund, balance decreases.
+            // But we use the stored amount's sign logic
+            const amt = t.type?.toUpperCase() === 'INCOME' || t.type?.toUpperCase() === 'PAYMENT' 
+                ? t.amount 
+                : -Math.abs(t.amount); // Force negative for refunds/deductions
+                
+            runningBalance += amt;
+            t.balance = runningBalance;
+        }
+
+        res.json(uniqueTxs);
     } catch (e) {
         console.error(e);
         res.status(500).json({ message: 'Server error' });
