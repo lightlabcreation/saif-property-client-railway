@@ -47,7 +47,7 @@ exports.getTransactions = async (req, res) => {
             }
             
             // Deduplicate Refunds/Adjustments (Same Request ID in description)
-            const refundRef = t.description.match(/REG-\d+|REF-\d+|ADJ-\d+/);
+            const refundRef = t.description.match(/REG-\d+|REF-\d+|ADJ-\d+|RA-\d+/);
             if (refundRef) {
                 const id = refundRef[0];
                 if (seenRefunds.has(id)) return false;
