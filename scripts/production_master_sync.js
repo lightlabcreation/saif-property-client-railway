@@ -17,13 +17,21 @@ async function masterSync() {
         data: {
             unit_status: 'ACTIVE',
             ready_for_leasing: true,
-            gc_delivered_completed: true, gc_delivered_date: activationDate,
-            gc_deficiencies_completed: true, gc_deficiencies_date: activationDate,
-            gc_cleaned_completed: true, gc_cleaned_date: activationDate,
-            ffe_installed_completed: true, ffe_installed_date: activationDate,
-            ose_installed_completed: true, ose_installed_date: activationDate,
-            final_cleaning_completed: true, final_cleaning_date: activationDate,
-            unit_ready_completed: true, unit_ready_date: activationDate
+            gc_delivered_completed: true,
+            gc_delivered_completed_date: activationDate,
+            gc_deficiencies_completed: true,
+            gc_deficiencies_completed_date: activationDate,
+            gc_cleaned_completed: true,
+            gc_cleaned_completed_date: activationDate,
+            ffe_installed_completed: true,
+            ffe_installed_completed_date: activationDate,
+            ose_installed_completed: true,
+            ose_installed_completed_date: activationDate,
+            final_cleaning_completed: true,
+            final_cleaning_completed_date: activationDate,
+            unit_ready_completed: true,
+            unit_ready_completed_date: activationDate,
+            availability_status: 'Available'
         }
     });
     console.log(`✅ Activated ${result.count} units.`);
