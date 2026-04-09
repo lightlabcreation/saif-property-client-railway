@@ -148,14 +148,15 @@ exports.createRefund = async (req, res) => {
                         }
                     });
 
-                    // Accounting Ledger: Dr Liability, Cr Income
+                    // Accounting Ledger: Double-Entry (Dr Liability, Cr Income)
                     const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
                     const prevBalance = lastTx ? parseFloat(lastTx.balance) : 0;
                     
+                    // 1. Decrease Liability
                     await tx.transaction.create({
                         data: {
                             date: new Date(),
-                            description: `SD Allocation: ${invoice.invoiceNo} (${invoice.category})`,
+                            description: `SD Allocation [Liability Deduction]: ${invoice.invoiceNo} (${invoice.category}) - ${requestId}`,
                             type: 'Liability Deduction',
                             amount: allocAmount,
                             balance: prevBalance - allocAmount,
@@ -163,6 +164,20 @@ exports.createRefund = async (req, res) => {
                             invoiceId: invoice.id
                         }
                     });
+
+                    // 2. Increase Income (Matches Revenue Dashboard)
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(),
+                            description: `SD Allocation [Income Record]: ${invoice.invoiceNo} (${invoice.category}) - ${requestId}`,
+                            type: 'Income',
+                            amount: allocAmount,
+                            balance: prevBalance, // Net change for the global cash balance is 0 since it's a transfer
+                            status: 'Completed',
+                            invoiceId: invoice.id
+                        }
+                    });
+
                 }
             }
 
@@ -281,14 +296,15 @@ exports.updateRefund = async (req, res) => {
                         }
                     });
 
-                    // Accounting Ledger: Deduction from Liability
+                    // Accounting Ledger: Double-Entry (Deduction from Liability + Income Record)
                     const lastTx = await tx.transaction.findFirst({ orderBy: { id: 'desc' } });
                     const prevBalance = lastTx ? parseFloat(lastTx.balance) : 0;
                     
+                    // 1. Decrease Liability
                     await tx.transaction.create({
                         data: {
                             date: new Date(),
-                            description: `SD Allocation: ${invoice.invoiceNo} (${invoice.category})`,
+                            description: `SD Allocation [Liability Deduction]: ${invoice.invoiceNo} (${invoice.category}) - ${id}`,
                             type: 'Liability Deduction',
                             amount: allocAmount,
                             balance: prevBalance - allocAmount,
@@ -296,6 +312,20 @@ exports.updateRefund = async (req, res) => {
                             invoiceId: invoice.id
                         }
                     });
+
+                    // 2. Increase Income (Matches Revenue Dashboard)
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(),
+                            description: `SD Allocation [Income Record]: ${invoice.invoiceNo} (${invoice.category}) - ${id}`,
+                            type: 'Income',
+                            amount: allocAmount,
+                            balance: prevBalance, // Transfer: No net change to global cash
+                            status: 'Completed',
+                            invoiceId: invoice.id
+                        }
+                    });
+
                 }
             }
 

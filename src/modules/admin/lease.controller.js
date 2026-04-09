@@ -690,6 +690,11 @@ exports.createLease = catchAsync(async (req, res, next) => {
             throw new AppError('Unit not found', 404);
         }
 
+        // --- RULE 3.7: Hard Reservation Lock ---
+        if (unit.reserved_flag && unit.reserved_by_id !== tId) {
+            throw new AppError('This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.', 400);
+        }
+
         // Determine lease type based on presence of bedroomId
         const isBedroomLease = bId !== null;
         const isFullUnitLease = !isBedroomLease;

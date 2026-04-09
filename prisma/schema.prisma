@@ -57,6 +57,7 @@ model User {
   isActive          Boolean            @default(true)
   permissions       Permission[]
   unit              Unit?              @relation(fields: [unitId], references: [id])
+  reservedUnits     Unit[]             @relation("UnitReservedByUser")
   building          Property?          @relation("BuildingTenants", fields: [buildingId], references: [id])
   preferredLanguage String?            @default("English")
 
@@ -137,15 +138,63 @@ model Unit {
   id                Int                @id @default(autoincrement())
   name              String
   propertyId        Int
-  status            String             @default("Vacant")
+  status            String             @default("Vacant") // Existing field (Keep for compatibility)
   bedrooms          Int                @default(1)
-  rentAmount        Decimal            @default(0.000000000000000000000000000000)
+  rentAmount        Decimal            @default(0.00)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   rentalMode        RentalMode         @default(FULL_UNIT)
   floor             Int?
   unitNumber        String?
   unitType          String?
+
+  // --- NEW: Unit Readiness & Reservation Module ---
+  unit_status        UnitStatus         @default(INACTIVE)
+  availability_status AvailabilityStatus @default(Unavailable)
+  ready_for_leasing  Boolean            @default(false)
+  current_owner      UnitOwner?
+  current_stage      String?
+  status_note        String?            @db.Text
+
+  // Section 1: GC Workflow
+  gc_delivered_target_date         DateTime?
+  gc_delivered_completed           Boolean   @default(false)
+  gc_delivered_completed_date      DateTime?
+
+  gc_deficiencies_target_date      DateTime?
+  gc_deficiencies_completed        Boolean   @default(false)
+  gc_deficiencies_completed_date   DateTime?
+
+  gc_cleaned_target_date           DateTime?
+  gc_cleaned_completed             Boolean   @default(false)
+  gc_cleaned_completed_date        DateTime?
+
+  // Section 2: Operations Workflow
+  ffe_installed_target_date        DateTime?
+  ffe_installed_completed          Boolean   @default(false)
+  ffe_installed_completed_date     DateTime?
+
+  ose_installed_target_date        DateTime?
+  ose_installed_completed          Boolean   @default(false)
+  ose_installed_completed_date     DateTime?
+
+  final_cleaning_target_date       DateTime?
+  final_cleaning_completed         Boolean   @default(false)
+  final_cleaning_completed_date    DateTime?
+
+  // Step 7: Unit Ready (Auto)
+  unit_ready_target_date           DateTime?
+  unit_ready_completed             Boolean   @default(false)
+  unit_ready_completed_date        DateTime?
+
+  // Reservation Section
+  reserved_flag           Boolean   @default(false)
+  reserved_by_id          Int?
+  reservation_date        DateTime?
+  tentative_move_in_date  DateTime?
+  reserved_by_user        User?     @relation("UnitReservedByUser", fields: [reserved_by_id], references: [id])
+  // ------------------------------------------------
+
   bedroomsList      Bedroom[]
   documents         Document[]
   insurances        Insurance[]
@@ -156,6 +205,9 @@ model Unit {
   property          Property           @relation(fields: [propertyId], references: [id], map: "Unit_propertyId_fkey")
 
   @@index([propertyId], map: "Unit_propertyId_fkey")
+  @@index([unit_status])
+  @@index([availability_status])
+  @@index([reserved_flag])
   @@map("unit")
 }
 
@@ -713,4 +765,29 @@ model UnitTypeRate {
   updatedAt         DateTime @updatedAt
 
   @@map("unittyperates")
+}
+
+model TimelineSetting {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  days  Int
+
+  @@map("timelinesetting")
+}
+
+enum UnitStatus {
+  INACTIVE
+  ACTIVE
+}
+
+enum AvailabilityStatus {
+  Unavailable
+  Available
+  Reserved
+  Occupied
+}
+
+enum UnitOwner {
+  GC
+  OPERATIONS
 }

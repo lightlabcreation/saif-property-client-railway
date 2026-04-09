@@ -46,12 +46,15 @@ exports.getTransactions = async (req, res) => {
                 seenPayments.add(t.paymentId);
             }
             
-            // Deduplicate Refunds/Adjustments (Same Request ID in description)
+            // Deduplicate Refunds/Adjustments (But keep Cash Refund and Allocation separate)
             const refundRef = t.description.match(/REG-\d+|REF-\d+|ADJ-\d+|RA-\d+/);
             if (refundRef) {
-                const id = refundRef[0];
-                if (seenRefunds.has(id)) return false;
-                seenRefunds.add(id);
+                const requestId = refundRef[0];
+                const isAllocation = t.description.toLowerCase().includes('allocation');
+                const uniqueKey = `${requestId}_${isAllocation ? 'ALLOC' : 'CASH'}`;
+                
+                if (seenRefunds.has(uniqueKey)) return false;
+                seenRefunds.add(uniqueKey);
             }
 
             return true;

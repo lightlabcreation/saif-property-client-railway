@@ -39,19 +39,19 @@ exports.getAllTenants = async (req, res) => {
             const searchTerms = search.split(' ').filter(term => term.length > 0);
             const searchConditions = searchTerms.map(term => ({
                 OR: [
-                    { firstName: { contains: term, mode: 'insensitive' } },
-                    { lastName: { contains: term, mode: 'insensitive' } },
-                    { name: { contains: term, mode: 'insensitive' } },
-                    { email: { contains: term, mode: 'insensitive' } },
-                    { phone: { contains: term, mode: 'insensitive' } },
-                    { companyName: { contains: term, mode: 'insensitive' } },
+                    { firstName: { contains: term } },
+                    { lastName: { contains: term } },
+                    { name: { contains: term } },
+                    { email: { contains: term } },
+                    { phone: { contains: term } },
+                    { companyName: { contains: term } },
                     { 
                         leases: {
                             some: {
                                 unit: {
                                     OR: [
-                                        { unitNumber: { contains: term, mode: 'insensitive' } },
-                                        { property: { name: { contains: term, mode: 'insensitive' } } }
+                                        { unitNumber: { contains: term } },
+                                        { property: { name: { contains: term } } }
                                     ]
                                 }
                             }
@@ -61,8 +61,8 @@ exports.getAllTenants = async (req, res) => {
                         residentLease: {
                             unit: {
                                 OR: [
-                                    { unitNumber: { contains: term, mode: 'insensitive' } },
-                                    { property: { name: { contains: term, mode: 'insensitive' } } }
+                                    { unitNumber: { contains: term } },
+                                    { property: { name: { contains: term } } }
                                 ]
                             }
                         }

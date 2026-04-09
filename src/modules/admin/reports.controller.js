@@ -27,13 +27,29 @@ exports.getReports = async (req, res) => {
         const totalRefunds = allRefunds.reduce((sum, r) => sum + parseFloat(r.amount), 0);
         const totalRevenue = grossRevenue - totalRefunds;
 
-        // Occupancy Rate
-        const totalUnits = await prisma.unit.count();
-        const occupiedUnits = await prisma.unit.count({ where: { status: { not: 'Vacant' } } });
+        // Occupancy Rate - Filter out INACTIVE (In Construction) units
+        const unitFilter = {
+            OR: [
+                { unit_status: 'ACTIVE' },
+                { unit_status: null }
+            ]
+        };
+        const totalUnits = await prisma.unit.count({ where: unitFilter });
+        const occupiedUnits = await prisma.unit.count({ 
+            where: { 
+                status: { not: 'Vacant' },
+                ...unitFilter
+            } 
+        });
         const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
 
         // Active Leases
-        const activeLeases = await prisma.lease.count({ where: { status: 'Active' } });
+        const activeLeases = await prisma.lease.count({ 
+            where: { 
+                status: 'Active',
+                unit: unitFilter
+            } 
+        });
 
         // Outstanding Rent Dues (Total Remaining Balance for RENT category)
         const unpaidRentInvoices = await prisma.invoice.findMany({
@@ -153,26 +169,57 @@ exports.getReports = async (req, res) => {
 // GET /api/admin/reports/rent-roll
 exports.getRentRoll = async (req, res) => {
     try {
-        const units = await prisma.unit.findMany({
-            include: {
-                property: true,
-                bedroomsList: {
-                    include: {
-                        leases: {
-                            where: { status: 'Active' },
-                            include: { tenant: true }
+        let units;
+        try {
+            units = await prisma.unit.findMany({
+                where: {
+                    OR: [
+                        { unit_status: 'ACTIVE' },
+                        { unit_status: { equals: undefined } } // Fallback for schema mismatch
+                    ]
+                },
+                include: {
+                    property: true,
+                    bedroomsList: {
+                        include: {
+                            leases: {
+                                where: { status: 'Active' },
+                                include: { tenant: true }
+                            }
                         }
+                    },
+                    leases: {
+                        where: { status: 'Active' },
+                        include: { tenant: true }
+                    },
+                    invoices: {
+                        where: { status: { notIn: ['paid', 'draft'] } }
                     }
-                },
-                leases: {
-                    where: { status: 'Active' },
-                    include: { tenant: true }
-                },
-                invoices: {
-                    where: { status: { notIn: ['paid', 'draft'] } }
                 }
-            }
-        });
+            });
+        } catch (err) {
+            console.warn('Rent Roll Fallback: unit_status column not yet sync. Fetching all units.');
+            units = await prisma.unit.findMany({
+                include: {
+                    property: true,
+                    bedroomsList: {
+                        include: {
+                            leases: {
+                                where: { status: 'Active' },
+                                include: { tenant: true }
+                            }
+                        }
+                    },
+                    leases: {
+                        where: { status: 'Active' },
+                        include: { tenant: true }
+                    },
+                    invoices: {
+                        where: { status: { notIn: ['paid', 'draft'] } }
+                    }
+                }
+            });
+        }
 
         // Also fetch all unpaid invoices for all tenants to calculate balances accurately
         // (Actually, we can optimize by including invoices in the unit query)

@@ -30,26 +30,46 @@ exports.getDashboardStats = async (req, res) => {
                 some: { id: parsedOwnerId }
             }
         } : {};
-        const unitFilter = parsedOwnerId ? { propertyId: { in: propertyIds } } : {};
-        const genericFilter = parsedOwnerId ? { unit: { propertyId: { in: propertyIds } } } : {};
+        const unitFilter = {
+            ...(parsedOwnerId ? { propertyId: { in: propertyIds } } : {}),
+            OR: [
+                { unit_status: 'ACTIVE' },
+                { unit_status: { equals: undefined } }
+            ]
+        };
+        const genericFilter = parsedOwnerId ? { unit: { propertyId: { in: propertyIds }, ...unitFilter } } : { unit: unitFilter };
 
         // 1. Total Properties
         const totalProperties = await prisma.property.count({
             where: propertyOnlyFilter
         });
 
-        // 2. Total Units
-        const totalUnits = await prisma.unit.count({
-            where: unitFilter
-        });
+        let totalUnits, occupiedUnits;
+        try {
+            // 2. Total Units
+            totalUnits = await prisma.unit.count({
+                where: unitFilter
+            });
+ 
+            // 3. Occupancy — any unit that is not 'Vacant' is considered occupied
+            occupiedUnits = await prisma.unit.count({
+                where: {
+                    status: { in: ['Occupied', 'Fully Booked'] },
+                    ...unitFilter
+                }
+            });
+        } catch (err) {
+            console.warn('Dashboard Fallback: unit_status column not yet sync.');
+            const fallbackFilter = parsedOwnerId ? { propertyId: { in: propertyIds } } : {};
+            totalUnits = await prisma.unit.count({ where: fallbackFilter });
+            occupiedUnits = await prisma.unit.count({
+                where: {
+                    status: { in: ['Occupied', 'Fully Booked'] },
+                    ...fallbackFilter
+                }
+            });
+        }
 
-        // 3. Occupancy — any unit that is not 'Vacant' is considered occupied
-        const occupiedUnits = await prisma.unit.count({
-            where: {
-                status: { in: ['Occupied', 'Fully Booked'] },
-                ...unitFilter
-            }
-        });
         const vacantUnits = totalUnits - occupiedUnits;
 
         // 4. Revenue Calculation — use unitFilter (not raw propertyIds) so global view works

@@ -27,6 +27,17 @@ const settingsController = require('./settings.controller');
 const taxController = require('./tax.controller');
 const accountController = require('./account.controller');
 const documentController = require('./document.controller');
+const readinessController = require('./readiness.controller');
+
+router.get('/readiness/dashboard', readinessController.getReadinessDashboard);
+router.get('/readiness/stats', readinessController.getReadinessStats);
+router.get('/readiness/buildings', readinessController.getBuildings);
+router.get('/readiness/settings', readinessController.getSettings);
+router.get('/readiness/settings', readinessController.getSettings);
+router.put('/readiness/settings', readinessController.updateSettings);
+router.put('/readiness/update-step/:unitId', readinessController.updateReadinessStep);
+router.put('/readiness/activate/:unitId', readinessController.activateUnit);
+router.get('/readiness/buildings', readinessController.getBuildings);
 
 router.get('/dashboard/stats', adminController.getDashboardStats);
 router.get('/properties', checkPermission('Buildings', 'view'), adminController.getProperties);
