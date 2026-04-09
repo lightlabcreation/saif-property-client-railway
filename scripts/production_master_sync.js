@@ -9,10 +9,7 @@ async function masterSync() {
     const activationDate = new Date();
     const result = await prisma.unit.updateMany({
         where: {
-            OR: [
-                { unit_status: { not: 'ACTIVE' } },
-                { unit_status: null }
-            ]
+            unit_status: { not: 'ACTIVE' }
         },
         data: {
             unit_status: 'ACTIVE',
