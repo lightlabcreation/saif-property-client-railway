@@ -16,12 +16,7 @@ exports.getAllUnits = async (req, res) => {
         
         // Step 1: Handle Construction Visibility
         if (req.query.showInactive !== 'true') {
-            whereConditions.push({
-                OR: [
-                    { unit_status: 'ACTIVE' },
-                    { unit_status: null } 
-                ]
-            });
+            whereConditions.push({ unit_status: 'ACTIVE' });
         }
 
         // Step 2: Handle Property/Search Filters
@@ -54,11 +49,12 @@ exports.getAllUnits = async (req, res) => {
 
         const where = whereConditions.length > 0 ? { AND: whereConditions } : {};
 
-        let units, total;
+        let units = [];
+        let total = 0;
 
         try {
-            // Main Query with new fields
-            [units, total] = await Promise.all([
+            // Main Query with Unit Status Isolation
+            const [fetchedUnits, fetchedTotal] = await Promise.all([
                 prisma.unit.findMany({
                     where,
                     include: {
@@ -75,19 +71,15 @@ exports.getAllUnits = async (req, res) => {
                 }),
                 prisma.unit.count({ where })
             ]);
+            units = fetchedUnits;
+            total = fetchedTotal;
         } catch (err) {
-            console.warn('Fallback: DB Column not found or Client out of sync. Running basic query.');
-            // Fallback: If unit_status column is totally missing or Client is old, ignore it
-            // Only keep the 'Safe' filters like search and propertyId
-            const safeConditions = whereConditions.filter(cond => {
-                // Remove any condition that explicitly checks unit_status
-                if (cond.OR && cond.OR.some(o => o.hasOwnProperty('unit_status'))) return false;
-                return true;
-            });
-            
+            console.error('Unit Query Error:', err.message);
+            // Fallback: If unit_status column is totally missing or sync error
+            const safeConditions = whereConditions.filter(cond => !cond.hasOwnProperty('unit_status'));
             const fallbackWhere = safeConditions.length > 0 ? { AND: safeConditions } : {};
 
-            [units, total] = await Promise.all([
+            const [fallbackUnits, fallbackTotal] = await Promise.all([
                 prisma.unit.findMany({
                     where: fallbackWhere,
                     include: {
@@ -104,6 +96,8 @@ exports.getAllUnits = async (req, res) => {
                 }),
                 prisma.unit.count({ where: fallbackWhere })
             ]);
+            units = fallbackUnits;
+            total = fallbackTotal;
         }
 
         // Step 3: Format exactly as frontend expects
@@ -254,7 +248,21 @@ exports.getUnitDetails = async (req, res) => {
 exports.updateUnit = async (req, res) => {
     try {
         const { id } = req.params;
+        const unitId = parseInt(id);
         const { unitNumber, unitType, floor, bedrooms, rentalMode, status, propertyId } = req.body;
+
+        // Hard Reservation Lock Logic
+        if (req.body.reserved_flag === true) {
+            const activeLease = await prisma.lease.findFirst({
+                where: { unitId: unitId, status: 'Active' }
+            });
+            if (activeLease) {
+                return res.status(400).json({ 
+                    message: 'HARD LOCK: Cannot reserve this unit because it currently has an active lease. Please end the active lease before reserving.' 
+                });
+            }
+        }
+
         
         const updatedUnit = await prisma.unit.update({
             where: { id: parseInt(id) },
@@ -321,9 +329,14 @@ exports.deleteUnit = async (req, res) => {
         const paymentIds = payments.map(p => p.id);
 
         await prisma.$transaction(async (tx) => {
-            // A. Cleanup Transactions
+            // A. Cleanup Transactions (Must be first)
             await tx.transaction.deleteMany({
                 where: { OR: [{ invoiceId: { in: invoiceIds } }, { paymentId: { in: paymentIds } }] }
+            });
+
+            // A2. Cleanup Invoice Line Items (Prevents FK error deleting Invoices)
+            await tx.invoiceLineItem.deleteMany({
+                where: { invoiceId: { in: invoiceIds } }
             });
 
             // B. Cleanup Payments
@@ -332,8 +345,16 @@ exports.deleteUnit = async (req, res) => {
             // C. Insurance
             await tx.insurance.deleteMany({ where: { OR: [{ unitId }, { leaseId: { in: leaseIds } }] } });
 
-            // D. Documents
-            await tx.document.deleteMany({ where: { OR: [{ unitId }, { leaseId: { in: leaseIds } }, { invoiceId: { in: invoiceIds } }] } });
+            // D1. Cleanup Document Links (Prevents FK error deleting Documents)
+            const docs = await tx.document.findMany({ 
+                where: { OR: [{ unitId }, { leaseId: { in: leaseIds } }, { invoiceId: { in: invoiceIds } }] },
+                select: { id: true }
+            });
+            const docIds = docs.map(d => d.id);
+            await tx.documentLink.deleteMany({ where: { documentId: { in: docIds } } });
+
+            // D2. Documents
+            await tx.document.deleteMany({ where: { id: { in: docIds } } });
 
             // E. Ticketing
             await tx.ticket.deleteMany({ where: { unitId } });

@@ -1,4 +1,29 @@
 const prisma = require('../../config/prisma');
+const { addBusinessDays } = require('../../utils/dateUtils');
+const { format } = require('date-fns');
+
+// Helper to log administrative actions
+async function logAudit(userId, action, entity, entityId, details) {
+    try {
+        await prisma.auditLog.create({
+            data: {
+                userId,
+                action,
+                entity,
+                entityId,
+                details: typeof details === 'object' ? JSON.stringify(details) : details
+            }
+        });
+    } catch (e) {
+        console.error('Audit Log Error:', e);
+    }
+}
+
+// Helper to get holiday set
+async function getHolidaySet() {
+    const holidays = await prisma.holiday.findMany();
+    return new Set(holidays.map(h => format(new Date(h.date), 'yyyy-MM-dd')));
+}
 
 exports.getBuildings = async (req, res) => {
     try {
@@ -55,23 +80,36 @@ exports.getReadinessStats = async (req, res) => {
 // GET /api/admin/readiness/dashboard
 exports.getReadinessDashboard = async (req, res) => {
     try {
-        const { propertyId, search, status, page = 1, limit = 15 } = req.query;
+        const { propertyId, search, status, page = 1, limit = 15, showLeased } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
         const take = parseInt(limit);
+        const isShowLeased = showLeased === 'true';
 
-        const where = {};
+        const where = { AND: [] };
         
         // 1. Property Filter
         if (propertyId && propertyId !== '') {
-            where.propertyId = parseInt(propertyId);
+            where.AND.push({ propertyId: parseInt(propertyId) });
         }
 
-        // 2. Status Filter
+        // 2. Hide Leased Units (Rule 5)
+        // Rule: Remove from dashboard if Leased AND GC Deficiencies is completed
+        // PMS logic: Unit is 'Leased' if availability_status is 'Occupied' (Full Unit) or all bedrooms are Occupied.
+        if (!isShowLeased) {
+            where.AND.push({
+                OR: [
+                    { availability_status: { not: 'Occupied' } },
+                    { gc_deficiencies_completed: false }
+                ]
+            });
+        }
+
+        // 3. Status Filter
         if (status) {
             if (['Occupied', 'Available', 'Reserved', 'Unavailable'].includes(status)) {
-                where.availability_status = status;
+                where.AND.push({ availability_status: status });
             } else {
-                where.unit_status = status;
+                where.AND.push({ unit_status: status });
             }
         }
 
@@ -108,7 +146,12 @@ exports.getReadinessDashboard = async (req, res) => {
             where,
             include: {
                 property: true,
-                reserved_by_user: true
+                reserved_by_user: true,
+                leases: {
+                    where: { status: 'Active' },
+                    orderBy: { createdAt: 'desc' },
+                    take: 1
+                }
             },
             skip,
             take,
@@ -135,6 +178,27 @@ exports.getReadinessDashboard = async (req, res) => {
             if (targetDate && new Date(targetDate) < today) {
                 const diffTime = Math.abs(today - new Date(targetDate));
                 daysLate = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            }
+
+            // Rule 4: Days on Market / Days to Lease
+            let marketAge = 0;
+            let marketAgeLabel = 'Days on Market';
+            // Base Date: Final Cleaning (Step 5) as per Rule 4
+            if (u.final_cleaning_completed_date) {
+                const baseDate = new Date(u.final_cleaning_completed_date);
+                const activeLease = u.leases[0];
+                
+                if (activeLease) {
+                    // Frozen logic: Lease Date - Ready Date
+                    const leaseDate = new Date(activeLease.createdAt);
+                    const diffTime = Math.max(0, leaseDate - baseDate);
+                    marketAge = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                    marketAgeLabel = 'Days to Lease';
+                } else {
+                    // Live logic: Today - Ready Date
+                    const diffTime = Math.max(0, today - baseDate);
+                    marketAge = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                }
             }
 
             // Dynamically compute the Status Note / Stage (Matching Client Pattern)
@@ -179,6 +243,8 @@ exports.getReadinessDashboard = async (req, res) => {
                 owner: u.current_owner || 'GC',
                 stage: u.status_note || dynamicStage,
                 daysLate,
+                marketAge,
+                marketAgeLabel,
                 reserved: u.reserved_flag,
                 isActive: u.ready_for_leasing,
                 reservedBy: u.reserved_by_user?.name || null,
@@ -192,6 +258,15 @@ exports.getReadinessDashboard = async (req, res) => {
                     final_cleaning: u.final_cleaning_target_date,
                     unit_ready: u.unit_ready_target_date
                 },
+                manualProtection: {
+                    gc_delivered: u.gc_delivered_target_manual,
+                    gc_deficiencies: u.gc_deficiencies_target_manual,
+                    gc_cleaned: u.gc_cleaned_target_manual,
+                    ffe_installed: u.ffe_installed_target_manual,
+                    ose_installed: u.ose_installed_target_manual,
+                    final_cleaning: u.final_cleaning_target_manual,
+                    unit_ready: u.unit_ready_target_manual
+                },
                 completion: {
                     gc_delivered: u.gc_delivered_completed,
                     gc_deficiencies: u.gc_deficiencies_completed,
@@ -200,6 +275,9 @@ exports.getReadinessDashboard = async (req, res) => {
                     ose_installed: u.ose_installed_completed,
                     final_cleaning: u.final_cleaning_completed,
                     unit_ready: u.unit_ready_completed
+                },
+                actualDates: {
+                    unit_ready: u.unit_ready_completed_date
                 }
             };
         });
@@ -215,7 +293,8 @@ exports.getReadinessDashboard = async (req, res) => {
 exports.updateReadinessStep = async (req, res) => {
     try {
         const { unitId } = req.params;
-        const { stepKey, completed, completionDate, targetDate, recalculate } = req.body;
+        const { stepKey, completed, completionDate, targetDate, isManual, force, recalculate } = req.body;
+        const userId = req.user?.id;
 
         const unit = await prisma.unit.findUnique({
             where: { id: parseInt(unitId) }
@@ -226,7 +305,34 @@ exports.updateReadinessStep = async (req, res) => {
         const updateData = {};
         updateData[`${stepKey}_completed`] = completed;
         updateData[`${stepKey}_completed_date`] = completed ? (completionDate ? new Date(completionDate) : new Date()) : null;
-        if (targetDate) updateData[`${stepKey}_target_date`] = new Date(targetDate);
+        
+        if (targetDate) {
+            // Rule 1.4: Validation & Manual Protection
+            if (unit[`${stepKey}_target_manual`] && !force) {
+                return res.status(409).json({ 
+                    message: 'Manual override exists.', 
+                    code: 'MANUAL_OVERRIDE',
+                    current: unit[`${stepKey}_target_date`],
+                    proposed: targetDate
+                });
+            }
+
+            updateData[`${stepKey}_target_date`] = new Date(targetDate);
+            if (isManual) {
+                updateData[`${stepKey}_target_manual`] = true;
+            }
+
+            // Rule 7.1: Audit Logging for forced overrides
+            if (force) {
+                await logAudit(
+                    userId, 
+                    'FORCED_OVERRIDE', 
+                    'Unit', 
+                    unit.id, 
+                    { field: `${stepKey}_target_date`, from: unit[`${stepKey}_target_date`], to: targetDate }
+                );
+            }
+        }
 
         // Auto-initialize owner to GC if it's currently N/A or empty
         if (!unit.current_owner || unit.current_owner === 'N/A' || unit.current_owner === 'UNSPECIFIED') {
@@ -241,8 +347,11 @@ exports.updateReadinessStep = async (req, res) => {
             // Can only complete if previous is done or it's the first step
             if (stepIndex > 0) {
                 const prevStep = steps[stepIndex - 1];
-                if (!unit[`${prevStep}_completed`] && !unit[`${prevStep}_completed_date`] && !unit[`${prevStep}_actual_date`]) {
-                   return res.status(400).json({ message: `Cannot complete ${stepKey} until ${prevStep} is done.` });
+                // Rule 3: GC Deficiencies is NO LONGER a blocking step
+                if (prevStep !== 'gc_deficiencies') {
+                    if (!unit[`${prevStep}_completed`] && !unit[`${prevStep}_completed_date`]) {
+                        return res.status(400).json({ message: `Cannot complete ${stepKey} until ${prevStep} is done.` });
+                    }
                 }
             }
         } else {
@@ -269,31 +378,41 @@ exports.updateReadinessStep = async (req, res) => {
             updateData.unit_ready_completed_date = new Date();
         }
 
-        // --- AUTOMATION 4: Target Date Recalculation (Rule 3.3) ---
+        // --- AUTOMATION 4: Target Date Recalculation (Rule 1) ---
         if (stepKey === 'gc_delivered' && req.body.recalculate) {
             const settings = await prisma.timelineSetting.findMany();
             const setMap = settings.reduce((acc, s) => ({ ...acc, [s.key]: s.days }), {});
+            const holiSet = await getHolidaySet();
             
-            // Use provided targetDate, or existing target_date, or just the completion date
-            const baseDate = targetDate ? new Date(targetDate) : (unit.gc_delivered_target_date ? new Date(unit.gc_delivered_target_date) : new Date(updateData.gc_delivered_completed_date));
+            // Base Date: User either provided a new target, or we use the successful completion date
+            const baseDate = targetDate ? new Date(targetDate) : (updateData.gc_delivered_completed_date ? new Date(updateData.gc_delivered_completed_date) : new Date());
             
             const defDays = setMap['gc_to_deficiencies'] || 5;
-            updateData.gc_deficiencies_target_date = new Date(baseDate.getTime() + (defDays * 24 * 60 * 60 * 1000));
-            
             const cleanDays = setMap['deficiencies_to_cleaned'] || 5;
-            updateData.gc_cleaned_target_date = new Date(updateData.gc_deficiencies_target_date.getTime() + (cleanDays * 24 * 60 * 60 * 1000));
-            
             const ffeDays = setMap['cleaned_to_ffe'] || 10;
-            updateData.ffe_installed_target_date = new Date(updateData.gc_cleaned_target_date.getTime() + (ffeDays * 24 * 60 * 60 * 1000));
-            
-            const oseDays = setMap['ffe_to_ose'] || 7;
-            updateData.ose_installed_target_date = new Date(updateData.ffe_installed_target_date.getTime() + (oseDays * 24 * 60 * 60 * 1000));
-            
-            const finalDays = setMap['ose_to_final'] || 5;
-            updateData.final_cleaning_target_date = new Date(updateData.ose_installed_target_date.getTime() + (finalDays * 24 * 60 * 60 * 1000));
-            
-            const readyDays = setMap['final_to_ready'] || 2;
-            updateData.unit_ready_target_date = new Date(updateData.final_cleaning_target_date.getTime() + (readyDays * 24 * 60 * 60 * 1000));
+            const finalDays = setMap['ffe_to_final'] || 5;
+            const oseDays = setMap['final_to_ose'] || 7;
+            const readyDays = setMap['ose_to_ready'] || 2;
+
+            // Recalculate using Business Day Engine (Rule 2 Sequence)
+            if (!unit.gc_deficiencies_target_manual || force) {
+                updateData.gc_deficiencies_target_date = addBusinessDays(baseDate, defDays, holiSet);
+            }
+            if (!unit.gc_cleaned_target_manual || force) {
+                updateData.gc_cleaned_target_date = addBusinessDays(updateData.gc_deficiencies_target_date || unit.gc_deficiencies_target_date, cleanDays, holiSet);
+            }
+            if (!unit.ffe_installed_target_manual || force) {
+                updateData.ffe_installed_target_date = addBusinessDays(updateData.gc_cleaned_target_date || unit.gc_cleaned_target_date, ffeDays, holiSet);
+            }
+            if (!unit.final_cleaning_target_manual || force) {
+                updateData.final_cleaning_target_date = addBusinessDays(updateData.ffe_installed_target_date || unit.ffe_installed_target_date, finalDays, holiSet);
+            }
+            if (!unit.ose_installed_target_manual || force) {
+                updateData.ose_installed_target_date = addBusinessDays(updateData.final_cleaning_target_date || unit.final_cleaning_target_date, oseDays, holiSet);
+            }
+            if (!unit.unit_ready_target_manual || force) {
+                updateData.unit_ready_target_date = addBusinessDays(updateData.ose_installed_target_date || unit.ose_installed_target_date, readyDays, holiSet);
+            }
         }
 
         // --- AUTOMATION 5: Final Activation Check (Rule 3.1) ---
@@ -329,9 +448,9 @@ exports.getSettings = async (req, res) => {
                 { key: 'gc_to_deficiencies', days: 5 },
                 { key: 'deficiencies_to_cleaned', days: 5 },
                 { key: 'cleaned_to_ffe', days: 10 },
-                { key: 'ffe_to_ose', days: 7 },
-                { key: 'ose_to_final', days: 5 },
-                { key: 'final_to_ready', days: 2 }
+                { key: 'ffe_to_final', days: 5 },
+                { key: 'final_to_ose', days: 7 },
+                { key: 'ose_to_ready', days: 2 }
             ];
             
             for (const d of defaults) {
@@ -353,7 +472,7 @@ exports.getSettings = async (req, res) => {
 // POST /api/admin/readiness/settings
 exports.updateSettings = async (req, res) => {
     try {
-        const { settings } = req.body; // Array of { key, days }
+        const { settings, triggerRecalculate } = req.body; 
         for (const s of settings) {
             await prisma.timelineSetting.upsert({
                 where: { key: s.key },
@@ -361,11 +480,80 @@ exports.updateSettings = async (req, res) => {
                 create: { key: s.key, days: parseInt(s.days) }
             });
         }
+
+        // Rule 1: Trigger global recalculation if requested
+        if (triggerRecalculate) {
+           await recalculateAllUnitTimelines();
+        }
+
         res.json({ message: 'Settings updated' });
     } catch (error) {
         res.status(500).json({ message: 'Error updating settings' });
     }
 };
+
+// --- HOLIDAY CALENDAR ENDPOINTS ---
+exports.getHolidays = async (req, res) => {
+    try {
+        const holidays = await prisma.holiday.findMany({ orderBy: { date: 'asc' } });
+        res.json(holidays);
+    } catch (e) {
+        res.status(500).json({ message: 'Error fetching holidays' });
+    }
+};
+
+exports.addHoliday = async (req, res) => {
+    try {
+        const { date, name } = req.body;
+        const holiday = await prisma.holiday.create({ data: { date: new Date(date), name } });
+        res.json(holiday);
+    } catch (e) {
+        res.status(500).json({ message: 'Error adding holiday' });
+    }
+};
+
+exports.deleteHoliday = async (req, res) => {
+    try {
+        await prisma.holiday.delete({ where: { id: parseInt(req.params.id) } });
+        res.json({ message: 'Holiday deleted' });
+    } catch (e) {
+        res.status(500).json({ message: 'Error deleting holiday' });
+    }
+};
+
+// Global Recalculation Utility
+async function recalculateAllUnitTimelines() {
+    const units = await prisma.unit.findMany({
+        where: { gc_delivered_completed: true, unit_ready_completed: false }
+    });
+    
+    const settings = await prisma.timelineSetting.findMany();
+    const setMap = settings.reduce((acc, s) => ({ ...acc, [s.key]: s.days }), {});
+    const holiSet = await getHolidaySet();
+
+    for (const u of units) {
+        const baseDate = new Date(u.gc_delivered_completed_date);
+        const updates = {};
+        
+        const defDays = setMap['gc_to_deficiencies'] || 5;
+        const cleanDays = setMap['deficiencies_to_cleaned'] || 5;
+        const ffeDays = setMap['cleaned_to_ffe'] || 10;
+        const finalDays = setMap['ffe_to_final'] || 5;
+        const oseDays = setMap['final_to_ose'] || 7;
+        const readyDays = setMap['ose_to_ready'] || 2;
+
+        if (!u.gc_deficiencies_target_manual) updates.gc_deficiencies_target_date = addBusinessDays(baseDate, defDays, holiSet);
+        if (!u.gc_cleaned_target_manual) updates.gc_cleaned_target_date = addBusinessDays(updates.gc_deficiencies_target_date || u.gc_deficiencies_target_date, cleanDays, holiSet);
+        if (!u.ffe_installed_target_manual) updates.ffe_installed_target_date = addBusinessDays(updates.gc_cleaned_target_date || u.gc_cleaned_target_date, ffeDays, holiSet);
+        if (!u.final_cleaning_target_manual) updates.final_cleaning_target_date = addBusinessDays(updates.ffe_installed_target_date || u.ffe_installed_target_date, finalDays, holiSet);
+        if (!u.ose_installed_target_manual) updates.ose_installed_target_date = addBusinessDays(updates.final_cleaning_target_date || u.final_cleaning_target_date, oseDays, holiSet);
+        if (!u.unit_ready_target_manual) updates.unit_ready_target_date = addBusinessDays(updates.ose_installed_target_date || u.ose_installed_target_date, readyDays, holiSet);
+
+        if (Object.keys(updates).length > 0) {
+            await prisma.unit.update({ where: { id: u.id }, data: updates });
+        }
+    }
+}
 
 exports.activateUnit = async (req, res) => {
     try {

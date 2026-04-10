@@ -64,11 +64,12 @@ exports.createRefund = async (req, res) => {
             const depositInvoices = await tx.invoice.findMany({
                 where: {
                     tenantId: parseInt(tenantId),
+                    unitId: parseInt(unitId), // UNIT-AWARE: Only consider deposits for this unit
                     OR: [
                         { category: 'SECURITY_DEPOSIT' },
                         { description: { contains: 'Security Deposit' } }
                     ],
-                    paidAmount: { gt: 0 } // Any money paid is refundable
+                    paidAmount: { gt: 0 }
                 }
             });
             const totalDepositPaid = depositInvoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount || 0), 0);
@@ -76,6 +77,7 @@ exports.createRefund = async (req, res) => {
             const existingRefunds = await tx.refundAdjustment.findMany({
                 where: {
                     tenantId: parseInt(tenantId),
+                    unitId: parseInt(unitId), // UNIT-AWARE
                     status: { in: ['Completed', 'Issued'] }
                 }
             });
@@ -165,14 +167,16 @@ exports.createRefund = async (req, res) => {
                         }
                     });
 
-                    // 2. Increase Income (Matches Revenue Dashboard)
+                    // 2. Increase Income OR Transfer Liability (Correcting Accounting Labels)
+                    const isIncome = invoice.category !== 'SECURITY_DEPOSIT' && !invoice.description?.toLowerCase().includes('deposit');
+                    
                     await tx.transaction.create({
                         data: {
                             date: new Date(),
-                            description: `SD Allocation [Income Record]: ${invoice.invoiceNo} (${invoice.category}) - ${requestId}`,
-                            type: 'Income',
+                            description: `SD Allocation [${isIncome ? 'Income Record' : 'Liability Transfer'}]: ${invoice.invoiceNo} (${invoice.category}) - ${requestId}`,
+                            type: isIncome ? 'Income' : 'Liability Transfer',
                             amount: allocAmount,
-                            balance: prevBalance, // Net change for the global cash balance is 0 since it's a transfer
+                            balance: prevBalance, // Transfer: No net change to global cash
                             status: 'Completed',
                             invoiceId: invoice.id
                         }
@@ -313,12 +317,14 @@ exports.updateRefund = async (req, res) => {
                         }
                     });
 
-                    // 2. Increase Income (Matches Revenue Dashboard)
+                    // 2. Increase Income OR Transfer Liability (Correcting Accounting Labels)
+                    const isIncome = invoice.category !== 'SECURITY_DEPOSIT' && !invoice.description?.toLowerCase().includes('deposit');
+
                     await tx.transaction.create({
                         data: {
                             date: new Date(),
-                            description: `SD Allocation [Income Record]: ${invoice.invoiceNo} (${invoice.category}) - ${id}`,
-                            type: 'Income',
+                            description: `SD Allocation [${isIncome ? 'Income Record' : 'Liability Transfer'}]: ${invoice.invoiceNo} (${invoice.category}) - ${id}`,
+                            type: isIncome ? 'Income' : 'Liability Transfer',
                             amount: allocAmount,
                             balance: prevBalance, // Transfer: No net change to global cash
                             status: 'Completed',
@@ -383,10 +389,11 @@ exports.calculateRefund = async (req, res) => {
     try {
         const tenantId = parseInt(req.params.tenantId);
 
-        // 1. Get Paid Security Deposits
+        // 1. Get Paid Security Deposits (UNIT-AWARE)
         const depositInvoices = await prisma.invoice.findMany({
             where: {
                 tenantId,
+                unitId: req.query.unitId ? parseInt(req.query.unitId) : undefined, // Check if unit filter provided
                 OR: [
                     { category: 'SECURITY_DEPOSIT' },
                     { description: { contains: 'Security Deposit' } }
@@ -397,19 +404,23 @@ exports.calculateRefund = async (req, res) => {
 
         const totalDepositPaid = depositInvoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount || 0), 0);
 
-        // 2. Subtract ALL existing refund records (CASH part)
+        // 2. Subtract ALL existing refund records (CASH part) - UNIT-AWARE
         const existingRefunds = await prisma.refundAdjustment.findMany({
             where: {
                 tenantId,
+                unitId: req.query.unitId ? parseInt(req.query.unitId) : undefined,
                 status: { in: ['Completed', 'Issued'] }
             }
         });
         const totalRefundedInCash = existingRefunds.reduce((sum, r) => sum + Math.abs(parseFloat(r.amount || 0)), 0);
 
-        // 3. Subtract ALL existing allocations (DEDUCTION part)
+        // 3. Subtract ALL existing allocations (DEDUCTION part) - UNIT-AWARE
         const existingAllocations = await prisma.payment.findMany({
             where: {
-                invoice: { tenantId },
+                invoice: { 
+                    tenantId,
+                    unitId: req.query.unitId ? parseInt(req.query.unitId) : undefined
+                },
                 method: 'Security Deposit Allocation'
             }
         });
@@ -422,6 +433,7 @@ exports.calculateRefund = async (req, res) => {
         const hasEndedLease = await prisma.lease.findFirst({
             where: {
                 tenantId,
+                unitId: req.query.unitId ? parseInt(req.query.unitId) : undefined,
                 status: { in: ['Expired', 'Ended'] }
             }
         });
@@ -437,10 +449,11 @@ exports.calculateRefund = async (req, res) => {
             });
         }
 
-        // 3. Get Outstanding Invoices (Priority: Service first, then Rent)
+        // 3. Get Outstanding Invoices (Priority: Service first, then Rent) - UNIT-AWARE
         const outstandingInvoices = await prisma.invoice.findMany({
             where: {
                 tenantId,
+                unitId: req.query.unitId ? parseInt(req.query.unitId) : undefined,
                 status: { not: 'paid' },
                 balanceDue: { gt: 0 }
             },

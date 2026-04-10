@@ -35,9 +35,13 @@ router.get('/readiness/buildings', readinessController.getBuildings);
 router.get('/readiness/settings', readinessController.getSettings);
 router.get('/readiness/settings', readinessController.getSettings);
 router.put('/readiness/settings', readinessController.updateSettings);
-router.put('/readiness/update-step/:unitId', readinessController.updateReadinessStep);
-router.put('/readiness/activate/:unitId', readinessController.activateUnit);
-router.get('/readiness/buildings', readinessController.getBuildings);
+router.put('/readiness/update-step/:unitId', authenticate, readinessController.updateReadinessStep);
+router.put('/readiness/activate/:unitId', authenticate, readinessController.activateUnit);
+
+// Holiday Management
+router.get('/readiness/holidays', readinessController.getHolidays);
+router.post('/readiness/holidays', readinessController.addHoliday);
+router.delete('/readiness/holidays/:id', readinessController.deleteHoliday);
 
 router.get('/dashboard/stats', adminController.getDashboardStats);
 router.get('/properties', checkPermission('Buildings', 'view'), adminController.getProperties);

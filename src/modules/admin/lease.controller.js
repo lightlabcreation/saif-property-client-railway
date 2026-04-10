@@ -529,8 +529,10 @@ exports.activateLease = catchAsync(async (req, res, next) => {
             });
 
             if (!existingInvoice) {
+                // Get count once at start or use a more robust way
                 const count = await tx.invoice.count();
-                const invoiceNo = `INV-LEASE-${String(count + 1).padStart(5, '0')}`;
+                const randomId = Math.random().toString(36).substring(2, 5).toUpperCase(); // 3-char random safety
+                const invoiceNo = `INV-LEASE-${String(count + 1).padStart(5, '0')}-${randomId}`;
 
                 let rentAmt = parseFloat(updatedLease.monthlyRent) || 0;
 
@@ -579,7 +581,8 @@ exports.activateLease = catchAsync(async (req, res, next) => {
 
             if (!existingDepositInvoice) {
                 const count = await tx.invoice.count();
-                const invoiceNo = `INV-DEP-${String(count + 1).padStart(5, '0')}`;
+                const randomId = Math.random().toString(36).substring(2, 5).toUpperCase();
+                const invoiceNo = `INV-DEP-${String(count + 1).padStart(5, '0')}-${randomId}`;
 
                 await tx.invoice.create({
                     data: {
@@ -906,7 +909,8 @@ exports.createLease = catchAsync(async (req, res, next) => {
 
             if (!existingInvoice) {
                 const count = await tx.invoice.count();
-                const invoiceNo = `INV-LEASE-${String(count + 1).padStart(5, '0')}`;
+                const randomId = Math.random().toString(36).substring(2, 5).toUpperCase();
+                const invoiceNo = `INV-LEASE-${String(count + 1).padStart(5, '0')}-${randomId}`;
 
                 let rentAmt = parseFloat(monthlyRent) || 0;
 
@@ -955,7 +959,8 @@ exports.createLease = catchAsync(async (req, res, next) => {
 
             if (!existingDepositInvoice) {
                 const count = await tx.invoice.count();
-                const invoiceNo = `INV-DEP-${String(count + 1).padStart(5, '0')}`;
+                const randomId = Math.random().toString(36).substring(2, 5).toUpperCase();
+                const invoiceNo = `INV-DEP-${String(count + 1).padStart(5, '0')}-${randomId}`;
 
                 await tx.invoice.create({
                     data: {

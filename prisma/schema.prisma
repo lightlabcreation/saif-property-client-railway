@@ -60,6 +60,7 @@ model User {
   reservedUnits     Unit[]             @relation("UnitReservedByUser")
   building          Property?          @relation("BuildingTenants", fields: [buildingId], references: [id])
   preferredLanguage String?            @default("English")
+  auditLogs         AuditLog[]
 
   @@index([unitId], map: "user_unitId_fkey")
   @@index([buildingId], map: "user_buildingId_fkey")
@@ -158,32 +159,39 @@ model Unit {
 
   // Section 1: GC Workflow
   gc_delivered_target_date         DateTime?
+  gc_delivered_target_manual       Boolean   @default(false)
   gc_delivered_completed           Boolean   @default(false)
   gc_delivered_completed_date      DateTime?
 
   gc_deficiencies_target_date      DateTime?
+  gc_deficiencies_target_manual    Boolean   @default(false)
   gc_deficiencies_completed        Boolean   @default(false)
   gc_deficiencies_completed_date   DateTime?
 
   gc_cleaned_target_date           DateTime?
+  gc_cleaned_target_manual         Boolean   @default(false)
   gc_cleaned_completed             Boolean   @default(false)
   gc_cleaned_completed_date        DateTime?
 
   // Section 2: Operations Workflow
   ffe_installed_target_date        DateTime?
+  ffe_installed_target_manual      Boolean   @default(false)
   ffe_installed_completed          Boolean   @default(false)
   ffe_installed_completed_date     DateTime?
 
   ose_installed_target_date        DateTime?
+  ose_installed_target_manual      Boolean   @default(false)
   ose_installed_completed          Boolean   @default(false)
   ose_installed_completed_date     DateTime?
 
   final_cleaning_target_date       DateTime?
+  final_cleaning_target_manual     Boolean   @default(false)
   final_cleaning_completed         Boolean   @default(false)
   final_cleaning_completed_date    DateTime?
 
   // Step 7: Unit Ready (Auto)
   unit_ready_target_date           DateTime?
+  unit_ready_target_manual         Boolean   @default(false)
   unit_ready_completed             Boolean   @default(false)
   unit_ready_completed_date        DateTime?
 
@@ -790,4 +798,25 @@ enum AvailabilityStatus {
 enum UnitOwner {
   GC
   OPERATIONS
+}
+
+model Holiday {
+  id    Int      @id @default(autoincrement())
+  date  DateTime @unique
+  name  String
+
+  @@map("holiday")
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  action    String
+  entity    String
+  entityId  Int?
+  details   String?  @db.Text
+  timestamp DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@map("auditlog")
 }

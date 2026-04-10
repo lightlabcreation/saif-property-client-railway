@@ -11,6 +11,7 @@ const modulesList = [
     'Properties',
     'Buildings',
     'Units',
+    'Unit Readiness',
     'Tenants',
     'Tenant List',
     'Vehicles',
