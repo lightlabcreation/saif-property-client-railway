@@ -130,7 +130,10 @@ exports.createRefund = async (req, res) => {
                         orderBy: { dueDate: 'asc' }
                     });
                     
-                    let tempPool = availableDeposit;
+                    // Priority Security: We must reserve the 'requestedAmount' for the cash refund first
+                    // so we don't accidentally allocate it to rent.
+                    let tempPool = availableDeposit - requestedAmount;
+
                     for (const inv of unpaidRent) {
                         if (tempPool <= 0) break;
                         const ded = Math.min(tempPool, parseFloat(inv.balanceDue));
