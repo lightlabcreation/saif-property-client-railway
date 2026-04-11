@@ -94,11 +94,10 @@ exports.getReadinessDashboard = async (req, res) => {
 
         // 2. Hide Leased Units (Rule 5)
         // Rule: Remove from dashboard if Leased AND GC Deficiencies is completed
-        // PMS logic: Unit is 'Leased' if availability_status is 'Occupied' (Full Unit) or all bedrooms are Occupied.
         if (!isShowLeased) {
             where.AND.push({
                 OR: [
-                    { availability_status: { not: 'Occupied' } },
+                    { leases: { none: { status: 'Active' } } },
                     { gc_deficiencies_completed: false }
                 ]
             });
@@ -106,7 +105,9 @@ exports.getReadinessDashboard = async (req, res) => {
 
         // 3. Status Filter
         if (status) {
-            if (['Occupied', 'Available', 'Reserved', 'Unavailable'].includes(status)) {
+            if (status === 'Occupied') {
+                where.AND.push({ leases: { some: { status: 'Active' } } });
+            } else if (['Available', 'Reserved', 'Unavailable'].includes(status)) {
                 where.AND.push({ availability_status: status });
             } else {
                 where.AND.push({ unit_status: status });
@@ -211,8 +212,8 @@ exports.getReadinessDashboard = async (req, res) => {
                     { key: 'gc_deficiencies', label: 'GC Deficiencies' },
                     { key: 'gc_cleaned', label: 'GC Cleaned' },
                     { key: 'ffe_installed', label: 'FF&E Installed' },
-                    { key: 'ose_installed', label: 'OS&E Installed' },
                     { key: 'final_cleaning', label: 'Final Cleaning' },
+                    { key: 'ose_installed', label: 'OS&E Installed' },
                     { key: 'unit_ready', label: 'Unit Ready' }
                 ];
                 for (const s of steps) {
@@ -239,7 +240,7 @@ exports.getReadinessDashboard = async (req, res) => {
                 unitNumber: u.unitNumber,
                 building: u.property.name,
                 unit_status: u.unit_status,
-                availability: u.availability_status,
+                availability: u.leases.length > 0 ? 'Occupied' : u.availability_status,
                 owner: u.current_owner || 'GC',
                 stage: u.status_note || dynamicStage,
                 daysLate,
@@ -340,7 +341,7 @@ exports.updateReadinessStep = async (req, res) => {
         }
 
         // --- AUTOMATION 1: Strict Sequence Check ---
-        const steps = ['gc_delivered', 'gc_deficiencies', 'gc_cleaned', 'ffe_installed', 'ose_installed', 'final_cleaning', 'unit_ready'];
+        const steps = ['gc_delivered', 'gc_deficiencies', 'gc_cleaned', 'ffe_installed', 'final_cleaning', 'ose_installed', 'unit_ready'];
         const stepIndex = steps.indexOf(stepKey);
 
         if (completed) {
