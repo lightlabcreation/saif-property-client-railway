@@ -45,41 +45,43 @@ exports.getOutstandingDues = async (req, res) => {
             }
         });
 
-        const formattedDues = dues.map(due => {
-            const dueDate = due.dueDate ? new Date(due.dueDate) : new Date(due.createdAt); // Fallback if no dueDate
-            const now = new Date();
-            const diffTime = now - dueDate;
-            const daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const formattedDues = dues
+            .map(due => {
+                const dueDate = due.dueDate ? new Date(due.dueDate) : new Date(due.createdAt);
+                const now = new Date();
+                const diffTime = now - dueDate;
+                const daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-            const totalAmount = parseFloat(due.amount || 0);
-            const paidAmt = parseFloat(due.paidAmount || 0);
-            const balanceDue = totalAmount - paidAmt;
+                const totalAmount = parseFloat(due.amount || 0);
+                const paidAmt = parseFloat(due.paidAmount || 0);
+                const balanceDue = totalAmount - paidAmt;
 
-            // Determine status dynamically
-            let displayStatus = 'Pending';
-            if (due.status === 'partial') {
-                displayStatus = 'Partial';
-            } else if (daysOverdue > 0) {
-                displayStatus = 'Overdue';
-            }
+                // Determine status dynamically
+                let displayStatus = 'Pending';
+                if (due.status === 'partial') {
+                    displayStatus = 'Partial';
+                } else if (daysOverdue > 0) {
+                    displayStatus = 'Overdue';
+                }
 
-            return {
-                id: due.id,
-                invoice: due.invoiceNo,
-                tenant: due.tenant?.name || (due.tenant?.firstName ? `${due.tenant.firstName} ${due.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
-                unit: due.unit?.name || 'Unknown Unit',
-                leaseType: due.unit?.rentalMode === 'FULL_UNIT' ? 'Full Unit' : (due.unit?.rentalMode === 'BEDROOM_WISE' ? 'Bedroom' : 'N/A'),
-                amount: balanceDue, // This is what the UI shows as "Due"
-                totalAmount: totalAmount,
-                paidAmount: paidAmt,
-                dueDate: dueDate.toLocaleDateString('en-GB', {
-                    day: '2-digit', month: 'short', year: 'numeric'
-                }),
-                daysOverdue: daysOverdue > 0 ? daysOverdue : 0,
-                status: displayStatus
-            };
-
-        });
+                return {
+                    id: due.id,
+                    invoice: due.invoiceNo,
+                    tenant: due.tenant?.name || (due.tenant?.firstName ? `${due.tenant.firstName} ${due.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
+                    unit: due.unit?.name || 'Unknown Unit',
+                    leaseType: due.unit?.rentalMode === 'FULL_UNIT' ? 'Full Unit' : (due.unit?.rentalMode === 'BEDROOM_WISE' ? 'Bedroom' : 'N/A'),
+                    amount: Math.max(0, balanceDue), // Prevent negative display
+                    totalAmount: totalAmount,
+                    paidAmount: paidAmt,
+                    dueDate: dueDate.toLocaleDateString('en-GB', {
+                        day: '2-digit', month: 'short', year: 'numeric'
+                    }),
+                    daysOverdue: daysOverdue > 0 ? daysOverdue : 0,
+                    status: displayStatus,
+                    balanceDue: balanceDue // Keep raw for filter
+                };
+            })
+            .filter(d => d.balanceDue > 0); // Only show actual outstanding amounts
 
         res.json(formattedDues);
     } catch (error) {

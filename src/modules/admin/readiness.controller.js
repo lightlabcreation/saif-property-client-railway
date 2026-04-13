@@ -95,12 +95,7 @@ exports.getReadinessDashboard = async (req, res) => {
         // 2. Hide Leased Units (Rule 5)
         // Rule: Remove from dashboard if Leased AND GC Deficiencies is completed
         if (!isShowLeased) {
-            where.AND.push({
-                OR: [
-                    { leases: { none: { status: 'Active' } } },
-                    { gc_deficiencies_completed: false }
-                ]
-            });
+            where.AND.push({ leases: { none: { status: 'Active' } } });
         }
 
         // 3. Status Filter

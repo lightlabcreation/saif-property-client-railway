@@ -420,18 +420,25 @@ exports.deleteUnitType = async (req, res) => {
 exports.getVacantBedrooms = async (req, res) => {
     try {
         const propertyId = req.query.propertyId ? parseInt(req.query.propertyId) : undefined;
+        const unitId = req.query.unitId ? parseInt(req.query.unitId) : undefined;
+
         const vacantBedrooms = await prisma.bedroom.findMany({
             where: {
                 status: 'Vacant',
+                unitId: unitId || undefined,
                 unit: propertyId ? { propertyId } : undefined
             },
             include: { unit: { include: { property: true } } }
         });
+        
         res.json(vacantBedrooms.map(b => ({
             id: b.id,
+            bedroomNumber: b.bedroomNumber,
+            roomNumber: b.roomNumber,
             displayName: `${b.unit.property.name}-${b.unit.unitNumber}-${b.roomNumber}`
         })));
     } catch (error) {
+        console.error('getVacantBedrooms Error:', error);
         res.status(500).json({ message: 'Server error' });
     }
 };

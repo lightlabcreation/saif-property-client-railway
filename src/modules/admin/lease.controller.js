@@ -1005,6 +1005,9 @@ exports.createLease = catchAsync(async (req, res, next) => {
             });
         }
         return { lease };
+    }).catch(err => {
+        require('fs').appendFileSync('lease_error.log', `[${new Date().toISOString()}] Lease Creation Transaction Error: ${err.message}\n${err.stack}\n\n`);
+        throw err;
     });
 
     // 5. Automatic Onboarding Invitations

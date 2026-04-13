@@ -5,10 +5,9 @@ exports.getTransactions = async (req, res) => {
     try {
         const txs = await prisma.transaction.findMany({
             orderBy: { date: 'desc' },
-            take: 100,
             include: {
-                invoice: { select: { tenant: { select: { name: true } } } },
-                payment: { include: { invoice: { select: { tenant: { select: { name: true } } } } } }
+                invoice: { select: { category: true, tenant: { select: { name: true } } } },
+                payment: { include: { invoice: { select: { category: true, tenant: { select: { name: true } } } } } }
             }
         });
 
@@ -19,11 +18,14 @@ exports.getTransactions = async (req, res) => {
                 t.invoice?.tenant?.name || 
                 "Administrative";
 
+            const category = t.payment?.invoice?.category || t.invoice?.category || null;
+
             return {
                 id: t.id,
                 date: t.date.toISOString().split('T')[0],
                 tenant: tenantName,
                 description: t.description,
+                category: category,
                 type: t.type,
                 amount: parseFloat(t.amount),
                 balance: parseFloat(t.balance),
