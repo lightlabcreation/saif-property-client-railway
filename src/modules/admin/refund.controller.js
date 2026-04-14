@@ -146,9 +146,16 @@ exports.createRefund = async (req, res) => {
                     const invoice = await tx.invoice.findUnique({ where: { id: allocation.invoiceId } });
                     if (!invoice) continue;
 
-                    const allocAmount = parseFloat(allocation.amount);
-                    const newPaidAmount = parseFloat(invoice.paidAmount) + allocAmount;
-                    const newBalanceDue = Math.max(0, parseFloat(invoice.amount) - newPaidAmount);
+                    const invAmount = parseFloat(invoice.amount) || 0;
+                    const invPaid = parseFloat(invoice.paidAmount) || 0;
+                    const remainingToPay = Math.max(0, invAmount - invPaid);
+                    
+                    // SAFETY GUARD: Never allocate more than what is actually remaining
+                    const allocAmount = Math.min(parseFloat(allocation.amount), remainingToPay);
+                    if (allocAmount <= 0) continue;
+
+                    const newPaidAmount = invPaid + allocAmount;
+                    const newBalanceDue = Math.max(0, invAmount - newPaidAmount);
 
                     // Update Invoice
                     await tx.invoice.update({
@@ -295,9 +302,16 @@ exports.updateRefund = async (req, res) => {
                     const invoice = await tx.invoice.findUnique({ where: { id: allocation.invoiceId } });
                     if (!invoice) continue;
 
-                    const allocAmount = parseFloat(allocation.amount);
-                    const newPaidAmount = parseFloat(invoice.paidAmount) + allocAmount;
-                    const newBalanceDue = Math.max(0, parseFloat(invoice.amount) - newPaidAmount);
+                    const invAmount = parseFloat(invoice.amount) || 0;
+                    const invPaid = parseFloat(invoice.paidAmount) || 0;
+                    const remainingToPay = Math.max(0, invAmount - invPaid);
+                    
+                    // SAFETY GUARD: Never allocate more than what is actually remaining
+                    const allocAmount = Math.min(parseFloat(allocation.amount), remainingToPay);
+                    if (allocAmount <= 0) continue;
+
+                    const newPaidAmount = invPaid + allocAmount;
+                    const newBalanceDue = Math.max(0, invAmount - newPaidAmount);
 
                     // Update Invoice
                     await tx.invoice.update({

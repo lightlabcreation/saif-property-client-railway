@@ -58,7 +58,7 @@ exports.getReports = async (req, res) => {
                 category: 'RENT'
             }
         });
-        const outstandingRent = unpaidRentInvoices.reduce((sum, i) => sum + parseFloat(i.balanceDue), 0);
+        const outstandingRent = unpaidRentInvoices.reduce((sum, i) => sum + (parseFloat(i.amount) - parseFloat(i.paidAmount)), 0);
 
         // Outstanding Deposit Dues (Total Remaining Balance for Security Deposit category or description)
         const unpaidDepositInvoices = await prisma.invoice.findMany({
@@ -73,7 +73,7 @@ exports.getReports = async (req, res) => {
                 ]
             }
         });
-        const outstandingDeposits = unpaidDepositInvoices.reduce((sum, i) => sum + parseFloat(i.balanceDue), 0);
+        const outstandingDeposits = unpaidDepositInvoices.reduce((sum, i) => sum + (parseFloat(i.amount) - parseFloat(i.paidAmount)), 0);
 
         // --- Graphs Data ---
 
@@ -237,8 +237,9 @@ exports.getRentRoll = async (req, res) => {
         allUnpaidInvoices.forEach(inv => {
             const isDeposit = inv.category === 'SECURITY_DEPOSIT' || 
                              (inv.category === 'SERVICE' && inv.description?.includes('Security Deposit'));
-            if (isDeposit) totalOutstandingDeposits += parseFloat(inv.balanceDue);
-            else if (inv.category === 'RENT') totalOutstandingRent += parseFloat(inv.balanceDue);
+            const balance = parseFloat(inv.amount) - parseFloat(inv.paidAmount);
+            if (isDeposit) totalOutstandingDeposits += balance;
+            else if (inv.category === 'RENT') totalOutstandingRent += balance;
         });
 
         let rentRollArray = [];

@@ -25,6 +25,16 @@ async function getHolidaySet() {
     return new Set(holidays.map(h => format(new Date(h.date), 'yyyy-MM-dd')));
 }
 
+/**
+ * Normalizes a date to midday UTC to avoid timezone shifts (e.g., April 13 turning into April 12).
+ */
+function normalizeDate(dateInput) {
+    if (!dateInput) return null;
+    const d = new Date(dateInput);
+    // Set to 12:00:00 UTC to ensure that regardless of local offset, it stays on the same calendar day
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0));
+}
+
 exports.getBuildings = async (req, res) => {
     try {
         const properties = await prisma.property.findMany({
@@ -155,24 +165,12 @@ exports.getReadinessDashboard = async (req, res) => {
         });
 
         const formatted = units.map(u => {
-            // Computed Logic for Days Late
+            // --- UPDATED LOGIC: Anchor Days Late to Unit Ready Date ---
             let daysLate = 0;
             const today = new Date();
-            
-            const getPendingStepDate = (unit) => {
-                if (!unit.gc_delivered_completed) return unit.gc_delivered_target_date;
-                if (!unit.gc_deficiencies_completed) return unit.gc_deficiencies_target_date;
-                if (!unit.gc_cleaned_completed) return unit.gc_cleaned_target_date;
-                if (!unit.ffe_installed_completed) return unit.ffe_installed_target_date;
-                if (!unit.ose_installed_completed) return unit.ose_installed_target_date;
-                if (!unit.final_cleaning_completed) return unit.final_cleaning_target_date;
-                if (!unit.unit_ready_completed) return unit.unit_ready_target_date;
-                return null;
-            };
-
-            const targetDate = getPendingStepDate(u);
-            if (targetDate && new Date(targetDate) < today) {
-                const diffTime = Math.abs(today - new Date(targetDate));
+            const unitReadyTarget = u.unit_ready_target_date ? new Date(u.unit_ready_target_date) : null;
+            if (unitReadyTarget && !u.unit_ready_completed && unitReadyTarget < today.setHours(0,0,0,0)) {
+                const diffTime = Math.abs(today - unitReadyTarget);
                 daysLate = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
             }
 
@@ -300,11 +298,11 @@ exports.updateReadinessStep = async (req, res) => {
 
         const updateData = {};
         updateData[`${stepKey}_completed`] = completed;
-        updateData[`${stepKey}_completed_date`] = completed ? (completionDate ? new Date(completionDate) : new Date()) : null;
+        updateData[`${stepKey}_completed_date`] = completed ? (completionDate ? normalizeDate(completionDate) : normalizeDate(new Date())) : null;
         
         if (targetDate) {
-            // Rule 1.4: Validation & Manual Protection
-            if (unit[`${stepKey}_target_manual`] && !force) {
+            // Rule: Prioritize manual entries and allow forced overwrites to fix the "Error updating" popup
+            if (unit[`${stepKey}_target_manual`] && !force && !isManual) {
                 return res.status(409).json({ 
                     message: 'Manual override exists.', 
                     code: 'MANUAL_OVERRIDE',
@@ -313,7 +311,7 @@ exports.updateReadinessStep = async (req, res) => {
                 });
             }
 
-            updateData[`${stepKey}_target_date`] = new Date(targetDate);
+            updateData[`${stepKey}_target_date`] = normalizeDate(targetDate);
             if (isManual) {
                 updateData[`${stepKey}_target_manual`] = true;
             }
@@ -374,41 +372,11 @@ exports.updateReadinessStep = async (req, res) => {
             updateData.unit_ready_completed_date = new Date();
         }
 
-        // --- AUTOMATION 4: Target Date Recalculation (Rule 1) ---
-        if (stepKey === 'gc_delivered' && req.body.recalculate) {
-            const settings = await prisma.timelineSetting.findMany();
-            const setMap = settings.reduce((acc, s) => ({ ...acc, [s.key]: s.days }), {});
-            const holiSet = await getHolidaySet();
-            
-            // Base Date: User either provided a new target, or we use the successful completion date
-            const baseDate = targetDate ? new Date(targetDate) : (updateData.gc_delivered_completed_date ? new Date(updateData.gc_delivered_completed_date) : new Date());
-            
-            const defDays = setMap['gc_to_deficiencies'] || 5;
-            const cleanDays = setMap['deficiencies_to_cleaned'] || 5;
-            const ffeDays = setMap['cleaned_to_ffe'] || 10;
-            const finalDays = setMap['ffe_to_final'] || 5;
-            const oseDays = setMap['final_to_ose'] || 7;
-            const readyDays = setMap['ose_to_ready'] || 2;
-
-            // Recalculate using Business Day Engine (Rule 2 Sequence)
-            if (!unit.gc_deficiencies_target_manual || force) {
-                updateData.gc_deficiencies_target_date = addBusinessDays(baseDate, defDays, holiSet);
-            }
-            if (!unit.gc_cleaned_target_manual || force) {
-                updateData.gc_cleaned_target_date = addBusinessDays(updateData.gc_deficiencies_target_date || unit.gc_deficiencies_target_date, cleanDays, holiSet);
-            }
-            if (!unit.ffe_installed_target_manual || force) {
-                updateData.ffe_installed_target_date = addBusinessDays(updateData.gc_cleaned_target_date || unit.gc_cleaned_target_date, ffeDays, holiSet);
-            }
-            if (!unit.final_cleaning_target_manual || force) {
-                updateData.final_cleaning_target_date = addBusinessDays(updateData.ffe_installed_target_date || unit.ffe_installed_target_date, finalDays, holiSet);
-            }
-            if (!unit.ose_installed_target_manual || force) {
-                updateData.ose_installed_target_date = addBusinessDays(updateData.final_cleaning_target_date || unit.final_cleaning_target_date, oseDays, holiSet);
-            }
-            if (!unit.unit_ready_target_manual || force) {
-                updateData.unit_ready_target_date = addBusinessDays(updateData.ose_installed_target_date || unit.ose_installed_target_date, readyDays, holiSet);
-            }
+        // --- AUTOMATION 4: Fixed Anchor Target Date Calculation ---
+        if ((stepKey === 'gc_delivered' && targetDate) || (stepKey === 'gc_delivered' && recalculate)) {
+            const anchorDate = targetDate ? normalizeDate(targetDate) : (unit.gc_delivered_target_date || new Date());
+            const timelineUpdates = await exports.recalculateTimelineHelper(anchorDate);
+            Object.assign(updateData, timelineUpdates);
         }
 
         // --- AUTOMATION 5: Final Activation Check (Rule 3.1) ---
@@ -517,7 +485,32 @@ exports.deleteHoliday = async (req, res) => {
     }
 };
 
-// Global Recalculation Utility
+// Reusable Timeline Helper
+exports.recalculateTimelineHelper = async (inputAnchorDate) => {
+    const settings = await prisma.timelineSetting.findMany();
+    const setMap = settings.reduce((acc, s) => ({ ...acc, [s.key]: s.days }), {});
+    const holiSet = await getHolidaySet();
+    const anchorDate = normalizeDate(inputAnchorDate);
+    
+    const defDays = parseInt(setMap['gc_to_deficiencies']) || 5;
+    const cleanDays = parseInt(setMap['deficiencies_to_cleaned']) || 5;
+    const ffeDays = parseInt(setMap['cleaned_to_ffe']) || 10;
+    const finalDays = parseInt(setMap['ffe_to_final']) || 5;
+    const oseDays = parseInt(setMap['final_to_ose']) || 7;
+    const readyDays = parseInt(setMap['ose_to_ready']) || 2;
+
+    const updates = {};
+    updates.gc_deficiencies_target_date = addBusinessDays(anchorDate, defDays, holiSet);
+    updates.gc_cleaned_target_date = addBusinessDays(updates.gc_deficiencies_target_date, cleanDays, holiSet);
+    updates.ffe_installed_target_date = addBusinessDays(updates.gc_cleaned_target_date, ffeDays, holiSet);
+    updates.final_cleaning_target_date = addBusinessDays(updates.ffe_installed_target_date, finalDays, holiSet);
+    updates.ose_installed_target_date = addBusinessDays(updates.final_cleaning_target_date, oseDays, holiSet);
+    updates.unit_ready_target_date = addBusinessDays(updates.ose_installed_target_date, readyDays, holiSet);
+    
+    return updates;
+};
+
+// POST /api/admin/readiness/holidays
 async function recalculateAllUnitTimelines() {
     const units = await prisma.unit.findMany({
         where: { gc_delivered_completed: true, unit_ready_completed: false }
@@ -528,7 +521,7 @@ async function recalculateAllUnitTimelines() {
     const holiSet = await getHolidaySet();
 
     for (const u of units) {
-        const baseDate = new Date(u.gc_delivered_completed_date);
+        const anchorDate = normalizeDate(u.gc_delivered_target_date || new Date());
         const updates = {};
         
         const defDays = setMap['gc_to_deficiencies'] || 5;
@@ -538,12 +531,12 @@ async function recalculateAllUnitTimelines() {
         const oseDays = setMap['final_to_ose'] || 7;
         const readyDays = setMap['ose_to_ready'] || 2;
 
-        if (!u.gc_deficiencies_target_manual) updates.gc_deficiencies_target_date = addBusinessDays(baseDate, defDays, holiSet);
-        if (!u.gc_cleaned_target_manual) updates.gc_cleaned_target_date = addBusinessDays(updates.gc_deficiencies_target_date || u.gc_deficiencies_target_date, cleanDays, holiSet);
-        if (!u.ffe_installed_target_manual) updates.ffe_installed_target_date = addBusinessDays(updates.gc_cleaned_target_date || u.gc_cleaned_target_date, ffeDays, holiSet);
-        if (!u.final_cleaning_target_manual) updates.final_cleaning_target_date = addBusinessDays(updates.ffe_installed_target_date || u.ffe_installed_target_date, finalDays, holiSet);
-        if (!u.ose_installed_target_manual) updates.ose_installed_target_date = addBusinessDays(updates.final_cleaning_target_date || u.final_cleaning_target_date, oseDays, holiSet);
-        if (!u.unit_ready_target_manual) updates.unit_ready_target_date = addBusinessDays(updates.ose_installed_target_date || u.ose_installed_target_date, readyDays, holiSet);
+        updates.gc_deficiencies_target_date = addBusinessDays(anchorDate, defDays, holiSet);
+        updates.gc_cleaned_target_date = addBusinessDays(updates.gc_deficiencies_target_date, cleanDays, holiSet);
+        updates.ffe_installed_target_date = addBusinessDays(updates.gc_cleaned_target_date, ffeDays, holiSet);
+        updates.final_cleaning_target_date = addBusinessDays(updates.ffe_installed_target_date, finalDays, holiSet);
+        updates.ose_installed_target_date = addBusinessDays(updates.final_cleaning_target_date, oseDays, holiSet);
+        updates.unit_ready_target_date = addBusinessDays(updates.ose_installed_target_date, readyDays, holiSet);
 
         if (Object.keys(updates).length > 0) {
             await prisma.unit.update({ where: { id: u.id }, data: updates });

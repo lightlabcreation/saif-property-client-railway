@@ -1,4 +1,5 @@
 const prisma = require('../../config/prisma');
+const { recalculateTimelineHelper } = require('./readiness.controller');
 
 // GET /api/admin/units
 exports.getAllUnits = async (req, res) => {
@@ -183,7 +184,8 @@ exports.createUnit = async (req, res) => {
                 reserved_flag: req.body.reserved_flag || false,
                 reserved_by_id: req.body.reserved_by_id ? parseInt(req.body.reserved_by_id) : null,
                 reservation_date: req.body.reserved_flag ? new Date() : null,
-                tentative_move_in_date: req.body.tentative_move_in_date ? new Date(req.body.tentative_move_in_date) : null
+                tentative_move_in_date: req.body.tentative_move_in_date ? new Date(req.body.tentative_move_in_date) : null,
+                ...(req.body.gc_delivered_target_date ? await recalculateTimelineHelper(req.body.gc_delivered_target_date) : {})
             },
             include: { property: true }
         });
@@ -281,7 +283,8 @@ exports.updateUnit = async (req, res) => {
                 reservation_date: req.body.reservation_date ? new Date(req.body.reservation_date) : undefined,
                 tentative_move_in_date: req.body.tentative_move_in_date ? new Date(req.body.tentative_move_in_date) : undefined,
                 unit_status: req.body.unit_status,
-                availability_status: req.body.availability_status
+                availability_status: req.body.availability_status,
+                ...(req.body.gc_delivered_target_date ? await recalculateTimelineHelper(req.body.gc_delivered_target_date) : {})
             }
         });
         res.json(updatedUnit);
