@@ -70,6 +70,7 @@ exports.getOutstandingDues = async (req, res) => {
                     tenant: due.tenant?.name || (due.tenant?.firstName ? `${due.tenant.firstName} ${due.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
                     unit: due.unit?.name || 'Unknown Unit',
                     leaseType: due.unit?.rentalMode === 'FULL_UNIT' ? 'Full Unit' : (due.unit?.rentalMode === 'BEDROOM_WISE' ? 'Bedroom' : 'N/A'),
+                    category: due.category || 'RENT',
                     amount: Math.max(0, balanceDue), // Prevent negative display
                     totalAmount: totalAmount,
                     paidAmount: paidAmt,
