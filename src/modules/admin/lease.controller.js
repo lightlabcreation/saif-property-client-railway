@@ -7,6 +7,7 @@ const { generateLeasePDF } = require('../../utils/pdf.utils');
 const AppError = require('../../utils/AppError');
 const catchAsync = require('../../utils/catchAsync');
 const allowedOrigins = require('../../config/allowedOrigins');
+const { proxyRequest } = require('./shuttle.controller');
 
 
 // GET /api/admin/leases/:id/download
@@ -200,6 +201,17 @@ exports.deleteLease = async (req, res) => {
                 await tx.lease.delete({ where: { id } });
             });
             res.json({ message: 'Deleted permanently' });
+        }
+
+        // Phase 2: Automatic Shuttle Revocation
+        // If the tenant has no more active leases, remove from Shuttle
+        const otherLease = await prisma.lease.findFirst({
+            where: { tenantId: lease.tenantId, status: 'Active', NOT: { id } }
+        });
+        if (!otherLease && lease.tenant.email) {
+            proxyRequest('DELETE', `/users/email/${lease.tenant.email}`).catch(err => {
+                console.error('Shuttle revocation failed during lease deletion:', err.message);
+            });
         }
     } catch (e) {
         console.error('Delete Lease Error:', e);
@@ -402,6 +414,19 @@ exports.updateLease = catchAsync(async (req, res, next) => {
 
         return updatedLease;
     });
+
+    // Phase 2: Automatic Shuttle Revocation
+    // If the lease was just marked as Expired and no other active leases exist, remove from Shuttle
+    if (result && result.status === 'Expired' && result.tenant.email) {
+        const otherActiveLease = await prisma.lease.findFirst({
+            where: { tenantId: result.tenantId, status: 'Active', NOT: { id: result.id } }
+        });
+        if (!otherActiveLease) {
+            proxyRequest('DELETE', `/users/email/${result.tenant.email}`).catch(err => {
+                console.error('Shuttle revocation failed during lease expiration:', err.message);
+            });
+        }
+    }
 
     res.json({ success: true, data: result });
 });

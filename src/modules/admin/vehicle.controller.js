@@ -69,6 +69,7 @@ exports.getAllVehicles = async (req, res) => {
                 id: v.id,
                 tenantName: v.tenant.name || `${v.tenant.firstName} ${v.tenant.lastName}`,
                 tenantId: v.tenantId,
+                tenantPhone: v.tenant.phone || 'N/A',
                 buildingName: lease?.unit?.property?.name || 'N/A',
                 unitNumber: lease?.unit?.unitNumber || lease?.unit?.name || 'N/A',
                 make: v.make,

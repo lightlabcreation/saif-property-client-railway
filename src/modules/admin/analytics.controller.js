@@ -79,20 +79,40 @@ exports.getRevenueStats = async (req, res) => {
             const category = (inv.category || '').toUpperCase();
             let type = 'Rent';
 
-            if (category === 'SECURITY_DEPOSIT' || desc.includes('deposit')) {
+            // 🟢 HIGH PRECISISION CATEGORIZATION
+            if (category === 'SECURITY_DEPOSIT') {
                 type = 'Deposit';
                 actualDeposit += amount;
-            } else if (category === 'SERVICE') {
+            } else if (category === 'RENT') {
+                type = 'Rent';
+                actualRent += amount;
+            } 
+            // CATCH EXCEPTION: Description says "Deposit" but category is wrong (like the $5000 SERVICE error)
+            else if (desc.includes('deposit')) {
+                type = 'Deposit';
+                actualDeposit += amount;
+            } 
+            // OTHER CATEGORIES
+            else if (category === 'SERVICE' || category === 'LATE_FEE') {
+                type = 'ServiceFees';
+                actualServiceFees += amount;
+            } 
+            // FALLBACKS (For old un-tagged data)
+            else if (desc.includes('rent') || desc.includes('lease')) {
+                type = 'Rent';
+                actualRent += amount;
+            } else if (desc.includes('service') || desc.includes('fee')) {
                 type = 'ServiceFees';
                 actualServiceFees += amount;
             } else {
+                type = 'Rent'; // Default to Rent
                 actualRent += amount;
             }
 
             // Breakdown by Property (cumulative + monthly)
             const propName = inv.unit?.property?.name || 'Other Building';
             if (!propertyMap[propName]) propertyMap[propName] = { amount: 0, rent: 0, deposit: 0, serviceFees: 0, monthly: {} };
-            propertyMap[propName].amount += amount;
+            // Note: propertyMap[propName].amount handled as sum of parts at the end for consistency
             if (type === 'Rent') propertyMap[propName].rent += amount;
             else if (type === 'Deposit') propertyMap[propName].deposit += amount;
             else if (type === 'ServiceFees') propertyMap[propName].serviceFees += amount;
@@ -100,14 +120,12 @@ exports.getRevenueStats = async (req, res) => {
             // Monthly breakdown per property
             const mon = getMonthKey(inv.month);
             if (!propertyMap[propName].monthly[mon]) propertyMap[propName].monthly[mon] = { amount: 0, rent: 0, deposit: 0, serviceFees: 0 };
-            propertyMap[propName].monthly[mon].amount += amount;
             if (type === 'Rent') propertyMap[propName].monthly[mon].rent += amount;
             else if (type === 'Deposit') propertyMap[propName].monthly[mon].deposit += amount;
             else if (type === 'ServiceFees') propertyMap[propName].monthly[mon].serviceFees += amount;
 
             // Global monthly breakdown
             if (!monthlyMap[mon]) monthlyMap[mon] = { amount: 0, rent: 0, deposit: 0, serviceFees: 0 };
-            monthlyMap[mon].amount += amount;
             if (type === 'Rent') monthlyMap[mon].rent += amount;
             else if (type === 'Deposit') monthlyMap[mon].deposit += amount;
             else if (type === 'ServiceFees') monthlyMap[mon].serviceFees += amount;
@@ -116,14 +134,15 @@ exports.getRevenueStats = async (req, res) => {
         // Subtract refunds from totals and breakdowns
         refunds.forEach(ref => {
           const amount = Math.abs(parseFloat(ref.amount)) || 0;
-          actualRevenue -= amount;
           
           let type = 'Rent';
           const rType = ref.type.toLowerCase();
-          if (rType.includes('deposit') || rType.includes('deduction')) {
+          const rReason = (ref.reason || '').toLowerCase();
+          
+          if (rType.includes('deposit') || rReason.includes('deposit')) {
             type = 'Deposit';
             actualDeposit -= amount;
-          } else if (rType.includes('adjustment')) {
+          } else if (rType.includes('adjustment') || rType.includes('service') || rReason.includes('fee')) {
             type = 'ServiceFees';
             actualServiceFees -= amount;
           } else {
@@ -133,7 +152,6 @@ exports.getRevenueStats = async (req, res) => {
 
           const propName = ref.unit?.property?.name || 'Other Building';
           if (propertyMap[propName]) {
-            propertyMap[propName].amount -= amount;
             if (type === 'Rent') propertyMap[propName].rent -= amount;
             else if (type === 'Deposit') propertyMap[propName].deposit -= amount;
             else if (type === 'ServiceFees') propertyMap[propName].serviceFees -= amount;
@@ -141,14 +159,12 @@ exports.getRevenueStats = async (req, res) => {
 
           const mon = getMonthKey(ref.date);
           if (monthlyMap[mon]) {
-            monthlyMap[mon].amount -= amount;
             if (type === 'Rent') monthlyMap[mon].rent -= amount;
             else if (type === 'Deposit') monthlyMap[mon].deposit -= amount;
             else if (type === 'ServiceFees') monthlyMap[mon].serviceFees -= amount;
           }
 
           if (propertyMap[propName] && propertyMap[propName].monthly[mon]) {
-            propertyMap[propName].monthly[mon].amount -= amount;
             if (type === 'Rent') propertyMap[propName].monthly[mon].rent -= amount;
             else if (type === 'Deposit') propertyMap[propName].monthly[mon].deposit -= amount;
             else if (type === 'ServiceFees') propertyMap[propName].monthly[mon].serviceFees -= amount;
@@ -168,15 +184,28 @@ exports.getRevenueStats = async (req, res) => {
             propertyMap[propName].deposit -= amount;
           }
 
-          // Important: Subtract from the month of the allocation
-          const mon = getMonthKey(alloc.date);
-          if (monthlyMap[mon]) {
-            monthlyMap[mon].deposit -= amount;
-          }
-          if (propertyMap[propName] && propertyMap[propName].monthly[mon]) {
-            propertyMap[propName].monthly[mon].deposit -= amount;
-          }
         });
+
+        // 🟢 FINAL AGGREGATION: Recalculate totals as sum of realization parts
+        // actualRevenue = Total Rent Collected + Remaining Deposits Held + Fees
+        actualRevenue = actualRent + actualDeposit + actualServiceFees;
+
+        // Ensure property totals are also calculated as sum of their parts
+        Object.keys(propertyMap).forEach(pKey => {
+          const p = propertyMap[pKey];
+          p.amount = p.rent + p.deposit + p.serviceFees;
+          Object.keys(p.monthly).forEach(mKey => {
+            const m = p.monthly[mKey];
+            m.amount = m.rent + m.deposit + m.serviceFees;
+          });
+        });
+
+        // Ensure global monthly totals match
+        Object.keys(monthlyMap).forEach(mKey => {
+          const m = monthlyMap[mKey];
+          m.amount = m.rent + m.deposit + m.serviceFees;
+        });
+
 
         const monthSorter = (a, b) => {
             const parseDate = (s) => {

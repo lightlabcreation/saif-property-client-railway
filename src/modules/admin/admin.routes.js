@@ -168,4 +168,8 @@ router.get('/coworkers/:id/permissions', coworkerController.getPermissions);
 router.put('/coworkers/:id/permissions', coworkerController.updatePermissions);
 router.post('/coworkers/:id/send-invite', coworkerController.sendInvitation);
 
+// Shuttle Management API Bridge
+const shuttleRoutes = require('./shuttle.routes');
+router.use('/shuttle', shuttleRoutes);
+
 module.exports = router;

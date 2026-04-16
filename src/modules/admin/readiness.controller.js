@@ -102,10 +102,14 @@ exports.getReadinessDashboard = async (req, res) => {
             where.AND.push({ propertyId: parseInt(propertyId) });
         }
 
-        // 2. Hide Leased Units (Rule 5)
-        // Rule: Remove from dashboard if Leased AND GC Deficiencies is completed
+        // 2. Filter for New Construction only (Rule: Hide if Readiness is Complete)
+        // Rule: Remove from dashboard if (Not explicitly showLeased) AND (Has Active Lease OR is already "Ready/Active")
         if (!isShowLeased) {
-            where.AND.push({ leases: { none: { status: 'Active' } } });
+            where.AND.push({ 
+                leases: { none: { status: 'Active' } },
+                unit_ready_completed: false, // Ensure it's still in construction
+                ready_for_leasing: false    // Ensure it's not yet officially activated
+            });
         }
 
         // 3. Status Filter

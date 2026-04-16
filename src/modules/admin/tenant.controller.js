@@ -6,6 +6,7 @@ const emailService = require('../../services/email.service');
 const AppError = require('../../utils/AppError');
 const catchAsync = require('../../utils/catchAsync');
 const allowedOrigins = require('../../config/allowedOrigins');
+const { proxyRequest } = require('./shuttle.controller');
 
 
 // GET /api/admin/tenants
@@ -478,7 +479,16 @@ exports.createTenant = catchAsync(async (req, res, next) => {
         return newUser;
     });
 
-    // Communication moved to Lease Creation flow
+    // 2. Phase 2: Create user in Shuttle automatically (Async Hook)
+    if (result && result.email) {
+        proxyRequest('POST', '/auth/internal-create', {
+            name: result.name,
+            email: result.email,
+            phone: result.phone,
+            role: 'tenant',
+            source: 'PMS'
+        }).catch(err => console.error('Shuttle sync failed on creation:', err.message));
+    }
 
     res.status(201).json({
         success: true,
@@ -492,6 +502,15 @@ exports.createTenant = catchAsync(async (req, res, next) => {
 exports.deleteTenant = async (req, res) => {
     try {
         const id = parseInt(req.params.id);
+
+        // Phase 2: Automatic Revocation (Delete from Shuttle)
+        const tenant = await prisma.user.findUnique({ where: { id } });
+        if (tenant && tenant.email) {
+            // Delete by email if it exists
+            proxyRequest('DELETE', `/users/email/${tenant.email}`).catch(err => {
+                console.error('Shuttle revocation failed during deletion:', err.message);
+            });
+        }
 
         await prisma.$transaction(async (prisma) => {
             // 1. Find any lease (Active or Draft) to vacate unit and bedrooms

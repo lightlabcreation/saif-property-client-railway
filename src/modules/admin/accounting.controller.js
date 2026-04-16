@@ -3,6 +3,7 @@ const prisma = require('../../config/prisma');
 // GET /api/admin/accounting/transactions
 exports.getTransactions = async (req, res) => {
     try {
+        // 1. Fetch official transactions
         const txs = await prisma.transaction.findMany({
             orderBy: { date: 'desc' },
             include: {
@@ -11,14 +12,30 @@ exports.getTransactions = async (req, res) => {
             }
         });
 
+        // 2. Fetch all completed refunds (to find any not yet captured in the transaction table)
+        const completedRefunds = await prisma.refundAdjustment.findMany({
+            where: { status: 'Completed' },
+            include: { tenant: { select: { name: true } } }
+        });
+
         const formatted = txs.map(t => {
-            // Priority: Payment Tenant > Invoice Tenant > Description fallback
             const tenantName = 
                 t.payment?.invoice?.tenant?.name || 
                 t.invoice?.tenant?.name || 
                 "Administrative";
 
-            const category = t.payment?.invoice?.category || t.invoice?.category || null;
+            const desc = (t.description || '').toLowerCase();
+            let category = t.payment?.invoice?.category || t.invoice?.category || null;
+
+            // SMART CATEGORIZATION (Matches Revenue Dashboard Logic)
+            if (!category) {
+                if (desc.includes('deposit')) category = 'SECURITY_DEPOSIT';
+                else if (desc.includes('rent') || desc.includes('lease')) category = 'RENT';
+                else if (desc.includes('service') || desc.includes('fee')) category = 'SERVICE';
+            } else {
+                // Catch the specific case where description says "Deposit" but category was "SERVICE"
+                if (desc.includes('deposit')) category = 'SECURITY_DEPOSIT';
+            }
 
             return {
                 id: t.id,
@@ -31,58 +48,125 @@ exports.getTransactions = async (req, res) => {
                 balance: parseFloat(t.balance),
                 status: t.status,
                 paymentId: t.paymentId,
-                invoiceId: t.invoiceId
+                invoiceId: t.invoiceId,
+                isSystemTx: true
             };
         });
 
-        // 🟢 SMART FILTER: UNIQUE RECORDS ONLY
+        // 3. 🟢 SMART SYNC: Inject missing RefundAdjustments that aren't in the Transaction table
+        // We identify them by checking for the Request ID (RA-XXXXX) in the description
+        const seenRefundIdsInTx = new Set();
+        formatted.forEach(t => {
+            const match = t.description.match(/RA-\d+/);
+            if (match) seenRefundIdsInTx.add(match[0]);
+        });
+
+        completedRefunds.forEach(ref => {
+            if (!seenRefundIdsInTx.has(ref.requestId)) {
+                // This refund exists in the refund table but hasn't been posted to the ledger yet
+                formatted.push({
+                    id: `legacy-${ref.requestId}`,
+                    date: ref.date.toISOString().split('T')[0],
+                    tenant: ref.tenant?.name || "Tenant",
+                    description: `${ref.type} Refund - ${ref.requestId}`,
+                    category: ref.type.toUpperCase().includes('DEPOSIT') ? 'SECURITY_DEPOSIT' : 'REFUND',
+                    type: 'LIABILITY', // Matches the logic for deductions
+                    amount: parseFloat(ref.amount),
+                    balance: 0, // Will be recalculated
+                    status: 'Completed',
+                    isSystemTx: false
+                });
+            }
+        });
+
+        // 4. Sort everything by date DESC again after merging
+        const sortedAll = formatted.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        // 5. Deduplication Layer (Remove exact duplicates if any exist)
         const seenPayments = new Set();
-        const seenRefunds = new Set();
-        const seenInvoices = new Set();
+        const seenRefs = new Set();
         
-        // 1. Remove exact system duplicates
-        const uniqueTxs = formatted.filter(t => {
-            // Deduplicate Payments (Same paymentId)
+        const uniqueTxs = sortedAll.filter(t => {
             if (t.paymentId) {
                 if (seenPayments.has(t.paymentId)) return false;
                 seenPayments.add(t.paymentId);
             }
-            
-            // Deduplicate Refunds/Adjustments (But keep Cash Refund and Allocation separate)
-            const refundRef = t.description.match(/REG-\d+|REF-\d+|ADJ-\d+|RA-\d+/);
-            if (refundRef) {
-                const requestId = refundRef[0];
-                const isAllocation = t.description.toLowerCase().includes('allocation');
-                const uniqueKey = `${requestId}_${isAllocation ? 'ALLOC' : 'CASH'}`;
-                
-                if (seenRefunds.has(uniqueKey)) return false;
-                seenRefunds.add(uniqueKey);
+            const refundMatch = t.description.match(/REG-\d+|REF-\d+|ADJ-\d+|RA-\d+/);
+            if (refundMatch) {
+                const requestId = refundMatch[0];
+                const typeSuffix = t.description.toLowerCase().includes('allocation') ? 'ALLOC' : 'CASH';
+                const uniqueKey = `${requestId}_${typeSuffix}`;
+                if (seenRefs.has(uniqueKey)) return false;
+                seenRefs.add(uniqueKey);
             }
-
             return true;
         });
 
-        // 2. RE-CALCULATE BALANCES (Top-Down to ensure logic is perfect)
-        // Note: Ledger is sorted by date DESC (Latest at [0])
-        // We calculate bottom-up for the current batch
-        let runningBalance = uniqueTxs.length > 0 ? (uniqueTxs[uniqueTxs.length - 1].balance || 0) : 0;
-        for (let i = uniqueTxs.length - 2; i >= 0; i--) {
-            const t = uniqueTxs[i];
-            const prev = uniqueTxs[i + 1];
+        // 6. 🟢 DIRECT DATA SCAN FOR SUMMARY BOXES (Mirror Revenue Dashboard Exactly)
+        const [invStats, refStats, allocStats] = await Promise.all([
+          prisma.invoice.findMany({ where: { paidAmount: { gt: 0 } } }),
+          prisma.refundAdjustment.findMany({ where: { status: 'Completed' } }),
+          prisma.payment.findMany({ where: { method: 'Security Deposit Allocation' } })
+        ]);
+
+        let actualRent = 0;
+        let actualDeposit = 0;
+        let actualServiceFees = 0;
+        let actualRefunds = 0;
+
+        invStats.forEach(inv => {
+            const amount = parseFloat(inv.paidAmount) || 0;
+            const desc = (inv.description || '').toLowerCase();
+            const category = (inv.category || '').toUpperCase();
             
-            // If it's an INCOME/Payment, balance increases. If it's a LIABILITY/Refund, balance decreases.
-            // But we use the stored amount's sign logic
-            const amt = t.type?.toUpperCase() === 'INCOME' || t.type?.toUpperCase() === 'PAYMENT' 
-                ? t.amount 
-                : -Math.abs(t.amount); // Force negative for refunds/deductions
-                
+            if (category === 'SECURITY_DEPOSIT') actualDeposit += amount;
+            else if (category === 'RENT') actualRent += amount;
+            else if (desc.includes('deposit')) actualDeposit += amount;
+            else if (category === 'SERVICE' || category === 'LATE_FEE') actualServiceFees += amount;
+            else if (desc.includes('rent') || desc.includes('lease')) actualRent += amount;
+            else if (desc.includes('service') || desc.includes('fee')) actualServiceFees += amount;
+            else actualRent += amount;
+        });
+
+        refStats.forEach(ref => {
+          const amount = Math.abs(parseFloat(ref.amount)) || 0;
+          const rType = ref.type.toLowerCase();
+          const rReason = (ref.reason || '').toLowerCase();
+          
+          actualRefunds += amount;
+          if (rType.includes('deposit') || rReason.includes('deposit')) actualDeposit -= amount;
+          else if (rType.includes('adjustment') || rType.includes('service') || rReason.includes('fee')) actualServiceFees -= amount;
+          else actualRent -= amount;
+        });
+
+        allocStats.forEach(alloc => {
+          actualDeposit -= (parseFloat(alloc.amount) || 0);
+        });
+
+        // 7. Balance re-calc for the table list (independent of summary boxes)
+        let runningBalance = 0;
+        const chronological = [...uniqueTxs].reverse();
+        chronological.forEach(t => {
+            const typeLower = (t.type || '').toLowerCase();
+            const isDeduction = typeLower.includes('refund') || typeLower.includes('liability') || t.description.toLowerCase().includes('allocation');
+            const amtVal = parseFloat(t.amount) || 0;
+            const amt = isDeduction ? -Math.abs(amtVal) : Math.abs(amtVal);
             runningBalance += amt;
             t.balance = runningBalance;
-        }
+        });
 
-        res.json(uniqueTxs);
+        // Return to DESC for the UI
+        res.json({
+            transactions: uniqueTxs,
+            stats: {
+                totalRent: actualRent,
+                totalDeposits: actualDeposit,
+                totalFees: actualServiceFees,
+                totalRefunds: actualRefunds
+            }
+        });
     } catch (e) {
-        console.error(e);
+        console.error('Accounting Ledger Sync Error:', e);
         res.status(500).json({ message: 'Server error' });
     }
 };

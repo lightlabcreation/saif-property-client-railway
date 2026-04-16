@@ -61,6 +61,7 @@ model User {
   building          Property?          @relation("BuildingTenants", fields: [buildingId], references: [id])
   preferredLanguage String?            @default("English")
   auditLogs         AuditLog[]
+  shuttleUserId     String?            // External ID for Morgan Shuttle App
 
   @@index([unitId], map: "user_unitId_fkey")
   @@index([buildingId], map: "user_buildingId_fkey")

@@ -257,22 +257,43 @@ exports.getMyPermissions = async (req, res) => {
 
 exports.updatePermissions = async (req, res) => {
     try {
-        const { id } = req.params;
-        const { permissions } = req.body; // Array of { id, canView, canAdd, etc. }
+        const { id } = req.params; // User ID
+        const { permissions } = req.body; 
 
-        const updates = permissions.map(p => {
-            const { id, ...updateData } = p;
-            return prisma.permission.update({
-                where: { id: parseInt(id) },
-                data: updateData
-            });
-        });
+        for (const p of permissions) {
+            const { id: permId, moduleName, ...updateData } = p;
+            
+            // Search manually since unique constraint (userId_moduleName) is missing in schema
+            let existing = null;
+            const numericId = parseInt(permId);
+            if (!isNaN(numericId) && numericId > 0) {
+                existing = await prisma.permission.findUnique({ where: { id: numericId } });
+            } else {
+                existing = await prisma.permission.findFirst({
+                    where: { userId: parseInt(id), moduleName }
+                });
+            }
 
-        await Promise.all(updates);
+            if (existing) {
+                await prisma.permission.update({
+                    where: { id: existing.id },
+                    data: updateData
+                });
+            } else {
+                await prisma.permission.create({
+                    data: {
+                        userId: parseInt(id),
+                        moduleName,
+                        ...updateData
+                    }
+                });
+            }
+        }
+
         res.json({ message: 'Permissions updated successfully' });
     } catch (error) {
         console.error('Update Permissions Error:', error);
-        res.status(500).json({ message: 'Error updating permissions' });
+        res.status(500).json({ message: 'Error updating permissions: ' + error.message });
     }
 };
 
