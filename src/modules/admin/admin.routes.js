@@ -29,14 +29,14 @@ const accountController = require('./account.controller');
 const documentController = require('./document.controller');
 const readinessController = require('./readiness.controller');
 
-router.get('/readiness/dashboard', readinessController.getReadinessDashboard);
-router.get('/readiness/stats', readinessController.getReadinessStats);
-router.get('/readiness/buildings', readinessController.getBuildings);
+router.get('/readiness/dashboard', checkPermission('Unit Readiness', 'view'), readinessController.getReadinessDashboard);
+router.get('/readiness/stats', checkPermission('Unit Readiness', 'view'), readinessController.getReadinessStats);
+router.get('/readiness/buildings', checkPermission('Unit Readiness', 'view'), readinessController.getBuildings);
 router.get('/readiness/settings', readinessController.getSettings);
 router.get('/readiness/settings', readinessController.getSettings);
 router.put('/readiness/settings', readinessController.updateSettings);
-router.put('/readiness/update-step/:unitId', authenticate, readinessController.updateReadinessStep);
-router.put('/readiness/activate/:unitId', authenticate, readinessController.activateUnit);
+router.put('/readiness/update-step/:unitId', authenticate, checkPermission('Unit Readiness', 'edit'), readinessController.updateReadinessStep);
+router.put('/readiness/activate/:unitId', authenticate, checkPermission('Unit Readiness', 'edit'), readinessController.activateUnit);
 
 // Holiday Management
 router.get('/readiness/holidays', readinessController.getHolidays);

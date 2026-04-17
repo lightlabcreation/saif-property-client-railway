@@ -182,7 +182,9 @@ exports.createUnit = async (req, res) => {
                 await prisma.user.update({
                     where: { id: targetUser.id },
                     data: {
-                        name: targetUser.name || `${reserve_firstName} ${reserve_lastName}`.trim(),
+                        name: `${reserve_firstName} ${reserve_lastName}`.trim(),
+                        firstName: reserve_firstName,
+                        lastName: reserve_lastName,
                         phone: reserve_phone || targetUser.phone
                     }
                 });
@@ -316,7 +318,9 @@ exports.updateUnit = async (req, res) => {
                 await prisma.user.update({
                     where: { id: targetUser.id },
                     data: {
-                        name: targetUser.name || `${reserve_firstName} ${reserve_lastName}`.trim(),
+                        name: `${reserve_firstName} ${reserve_lastName}`.trim(),
+                        firstName: reserve_firstName,
+                        lastName: reserve_lastName,
                         phone: reserve_phone || targetUser.phone
                     }
                 });
