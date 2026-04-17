@@ -92,7 +92,7 @@ exports.getInvoices = async (req, res) => {
             // Find active lease to get dates for UI
             const activeLease = inv.tenant.leases.find(l => l.status === 'Active' || l.status === 'DRAFT');
 
-            const displayCategory = inv.category === 'SERVICE' && inv.description === 'Security Deposit'
+            const displayCategory = (inv.category === 'SECURITY_DEPOSIT' || (inv.category === 'SERVICE' && inv.description === 'Security Deposit'))
                 ? 'DEPOSIT'
                 : inv.category;
 
@@ -183,7 +183,8 @@ exports.createInvoice = async (req, res) => {
 
         // Generate Invoice Number
         const count = await prisma.invoice.count();
-        const invoiceNo = `INV-MAN-${String(count + 1).padStart(5, '0')}`;
+        const prefix = req.body.category === 'SECURITY_DEPOSIT' ? 'INV-DEP' : 'INV-MAN';
+        const invoiceNo = `${prefix}-${String(count + 1).padStart(5, '0')}`;
 
         const newInvoice = await prisma.invoice.create({
             data: {

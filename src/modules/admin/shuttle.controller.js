@@ -1,5 +1,6 @@
 const axios = require('axios');
 const catchAsync = require('../../utils/catchAsync');
+const prisma = require('../../config/prisma');
 
 // The external Shuttle API URL
 // In production, this should be set in .env (e.g. process.env.SHUTTLE_API_URL || 'http://localhost:5001')
@@ -131,6 +132,7 @@ const updateRequestStatus = catchAsync(async (req, res) => {
 const getUsers = catchAsync(async (req, res) => {
   try {
     const data = await proxyRequest('GET', '/users');
+    console.log('DEBUG: Shuttle Users Data Received:', JSON.stringify(data.users, null, 2));
     res.json(data);
   } catch (error) {
     res.status(error.status || 500).json(error);
@@ -208,6 +210,133 @@ const duplicateDay = catchAsync(async (req, res) => {
   }
 });
 
+/**
+ * @desc    Create a new driver/staff user
+ * @route   POST /api/admin/shuttle/users
+ */
+const createDriver = catchAsync(async (req, res) => {
+  try {
+    const data = await proxyRequest('POST', '/auth/internal-create', req.body);
+    res.status(201).json(data);
+  } catch (error) {
+    res.status(error.status || 500).json(error);
+  }
+});
+
+/**
+ * @desc    Update a shuttle user (Tenant or Driver)
+ * @route   PUT /api/admin/shuttle/users/:id
+ */
+const updateUser = catchAsync(async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = await proxyRequest('PATCH', `/users/${id}`, req.body);
+    res.json(data);
+  } catch (error) {
+    res.status(error.status || 500).json(error);
+  }
+});
+
+/**
+ * @desc    Delete a shuttle user
+ * @route   DELETE /api/admin/shuttle/users/:id
+ */
+const deleteUser = catchAsync(async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = await proxyRequest('DELETE', `/users/${id}`);
+    res.json(data);
+  } catch (error) {
+    res.status(error.status || 500).json(error);
+  }
+});
+
+/**
+ * @desc    Send bulk shuttle invitations to users
+ */
+/**
+ * @desc    Get all available email templates for invitations
+ */
+const getTemplates = catchAsync(async (req, res) => {
+  try {
+    const templates = await prisma.emailTemplate.findMany({
+      where: { type: 'INVITATION' },
+      select: { id: true, name: true, subject: true }
+    });
+    res.json({ success: true, templates });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch templates' });
+  }
+});
+
+/**
+ * @desc    Invite selected PMS tenants to the Shuttle app
+ */
+const invitePMSTenants = catchAsync(async (req, res) => {
+  try {
+    const { tenantIds, templateId } = req.body;
+    const EmailService = require('../../services/email.service');
+    const crypto = require('crypto');
+
+    if (!tenantIds || !Array.isArray(tenantIds) || tenantIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'No tenants selected' });
+    }
+
+    // 1. Fetch tenants and template
+    const [tenants, template] = await Promise.all([
+      prisma.user.findMany({ where: { id: { in: tenantIds.map(id => parseInt(id)) } } }),
+      templateId ? prisma.emailTemplate.findUnique({ where: { id: parseInt(templateId) } }) : null
+    ]);
+
+    const results = [];
+    for (const tenant of tenants) {
+      if (!tenant.email) continue;
+
+      // 2. Proxied Create in Shuttle Backend
+      // This ensures they have an account in the mobile app system
+      try {
+        await proxyRequest('POST', '/auth/internal-create', {
+          name: tenant.name || `${tenant.firstName} ${tenant.lastName}`,
+          email: tenant.email,
+          phone: tenant.phone || '',
+          role: 'tenant',
+          source: 'PMS_INVITE'
+        });
+
+        // 3. Send Email
+        const baseUrl = process.env.FRONTEND_URL || 'https://masteko-pm.ca';
+        const inviteLink = `${baseUrl}/tenant/invite`; // Generic link or specific one if needed
+        
+        let subject = template?.subject || 'Invitation to Morgan Shuttle App';
+        let body = template?.body || `Hello ${tenant.name}, \n\nYou have been invited to join the Morgan Shuttle app. \n\nGet started here: ${inviteLink}`;
+
+        // Simple variable replacement
+        body = body.replace(/{{name}}/g, tenant.name || 'Tenant')
+                   .replace(/{{link}}/g, inviteLink);
+
+        await EmailService.sendEmail(tenant.email, subject, body, { isHtml: true });
+        results.push({ email: tenant.email, status: 'success' });
+      } catch (err) {
+        results.push({ email: tenant.email, status: 'failed', error: err.message });
+      }
+    }
+
+    res.json({ success: true, processed: results.length, details: results });
+  } catch (error) {
+    console.error('Invite PMS Tenants Error:', error);
+    res.status(500).json({ success: false, message: 'Process failed' });
+  }
+});
+
+const sendInvitation = catchAsync(async (req, res) => {
+  try {
+    const data = await proxyRequest('POST', '/auth/send-invitation', req.body);
+    res.json(data);
+  } catch (error) {
+    res.status(error.status || 500).json(error);
+  }
+});
+
 module.exports = {
   proxyRequest,
   getTrips,
@@ -218,5 +347,11 @@ module.exports = {
   updateRequestStatus,
   getUsers,
   updateTrip,
-  createRequest
+  createRequest,
+  createDriver,
+  updateUser,
+  deleteUser,
+  sendInvitation,
+  getTemplates,
+  invitePMSTenants
 };

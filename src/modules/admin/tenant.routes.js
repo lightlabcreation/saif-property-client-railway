@@ -2,9 +2,9 @@ const express = require('express');
 const router = express.Router();
 const tenantController = require('./tenant.controller');
 
-const { checkPermission } = require('../../middlewares/permission.middleware');
+const { checkPermission, checkAnyPermission } = require('../../middlewares/permission.middleware');
 
-router.get('/', checkPermission('Tenant List', 'view'), tenantController.getAllTenants);
+router.get('/', checkAnyPermission(['Tenant List', 'Shuttle'], 'view'), tenantController.getAllTenants);
 router.get('/:id', checkPermission('Tenant List', 'view'), tenantController.getTenantById);
 router.get('/:id/tickets', checkPermission('Tenant List', 'view'), tenantController.getTenantTickets);
 router.post('/', checkPermission('Tenant List', 'add'), tenantController.createTenant);

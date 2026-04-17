@@ -167,6 +167,41 @@ exports.createUnit = async (req, res) => {
         let normalizedMode = (rentalMode === 'BEDROOM_WISE' || rentalMode === '3') ? 'BEDROOM_WISE' : 'FULL_UNIT';
         const numBedrooms = parseInt(bedroomCount) || (normalizedMode === 'BEDROOM_WISE' ? 3 : 1);
 
+        let resUserId = req.body.reserved_by_id ? parseInt(req.body.reserved_by_id) : null;
+
+        // Phase 2: Quick Reservation Logic (Find or Create User)
+        if (req.body.reserved_flag && req.body.reserve_email) {
+            const { reserve_firstName, reserve_lastName, reserve_email, reserve_phone } = req.body;
+            const email = reserve_email.toLowerCase().trim();
+            
+            let targetUser = await prisma.user.findUnique({ where: { email } });
+            
+            if (targetUser) {
+                resUserId = targetUser.id;
+                // Update basic info if missing
+                await prisma.user.update({
+                    where: { id: targetUser.id },
+                    data: {
+                        name: targetUser.name || `${reserve_firstName} ${reserve_lastName}`.trim(),
+                        phone: reserve_phone || targetUser.phone
+                    }
+                });
+            } else {
+                const newUser = await prisma.user.create({
+                    data: {
+                        email,
+                        name: `${reserve_firstName} ${reserve_lastName}`.trim(),
+                        firstName: reserve_firstName,
+                        lastName: reserve_lastName,
+                        phone: reserve_phone || null,
+                        role: 'TENANT',
+                        type: 'INDIVIDUAL'
+                    }
+                });
+                resUserId = newUser.id;
+            }
+        }
+
         const newUnit = await prisma.unit.create({
             data: {
                 name: unitName || unitNumber,
@@ -182,7 +217,7 @@ exports.createUnit = async (req, res) => {
                 // readiness fields
                 gc_delivered_target_date: req.body.gc_delivered_target_date ? new Date(req.body.gc_delivered_target_date) : null,
                 reserved_flag: req.body.reserved_flag || false,
-                reserved_by_id: req.body.reserved_by_id ? parseInt(req.body.reserved_by_id) : null,
+                reserved_by_id: resUserId,
                 reservation_date: req.body.reserved_flag ? new Date() : null,
                 tentative_move_in_date: req.body.tentative_move_in_date ? new Date(req.body.tentative_move_in_date) : null,
                 ...(req.body.gc_delivered_target_date ? await recalculateTimelineHelper(req.body.gc_delivered_target_date) : {})
@@ -266,6 +301,41 @@ exports.updateUnit = async (req, res) => {
         }
 
         
+        let resUserId = req.body.reserved_by_id !== undefined ? (req.body.reserved_by_id ? parseInt(req.body.reserved_by_id) : null) : undefined;
+
+        // Phase 2: Quick Reservation Logic (Find or Create User)
+        if (req.body.reserved_flag && req.body.reserve_email) {
+            const { reserve_firstName, reserve_lastName, reserve_email, reserve_phone } = req.body;
+            const email = reserve_email.toLowerCase().trim();
+            
+            let targetUser = await prisma.user.findUnique({ where: { email } });
+            
+            if (targetUser) {
+                resUserId = targetUser.id;
+                // Update basic info if missing or provided
+                await prisma.user.update({
+                    where: { id: targetUser.id },
+                    data: {
+                        name: targetUser.name || `${reserve_firstName} ${reserve_lastName}`.trim(),
+                        phone: reserve_phone || targetUser.phone
+                    }
+                });
+            } else {
+                const newUser = await prisma.user.create({
+                    data: {
+                        email,
+                        name: `${reserve_firstName} ${reserve_lastName}`.trim(),
+                        firstName: reserve_firstName,
+                        lastName: reserve_lastName,
+                        phone: reserve_phone || null,
+                        role: 'TENANT',
+                        type: 'INDIVIDUAL'
+                    }
+                });
+                resUserId = newUser.id;
+            }
+        }
+        
         const updatedUnit = await prisma.unit.update({
             where: { id: parseInt(id) },
             data: {
@@ -279,7 +349,7 @@ exports.updateUnit = async (req, res) => {
                 // readiness fields
                 gc_delivered_target_date: req.body.gc_delivered_target_date ? new Date(req.body.gc_delivered_target_date) : undefined,
                 reserved_flag: req.body.reserved_flag !== undefined ? req.body.reserved_flag : undefined,
-                reserved_by_id: req.body.reserved_by_id !== undefined ? (req.body.reserved_by_id ? parseInt(req.body.reserved_by_id) : null) : undefined,
+                reserved_by_id: resUserId,
                 reservation_date: req.body.reservation_date ? new Date(req.body.reservation_date) : undefined,
                 tentative_move_in_date: req.body.tentative_move_in_date ? new Date(req.body.tentative_move_in_date) : undefined,
                 unit_status: req.body.unit_status,

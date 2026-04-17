@@ -102,13 +102,10 @@ exports.getReadinessDashboard = async (req, res) => {
             where.AND.push({ propertyId: parseInt(propertyId) });
         }
 
-        // 2. Filter for New Construction only (Rule: Hide only after first lease)
+        // 2. Filter for New Construction only (Rule: Hide permanently once a lease exists)
         if (!isShowLeased) {
             where.AND.push({ 
-                OR: [
-                    { unit_ready_completed: false }, // Show all units still in construction
-                    { leases: { none: {} } }         // Show all units that have never had a lease (even if ready)
-                ]
+                leases: { none: {} }  // Show only units that have never had any lease record
             });
         }
 

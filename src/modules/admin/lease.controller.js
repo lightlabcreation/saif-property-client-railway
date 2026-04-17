@@ -35,20 +35,29 @@ exports.downloadLeasePDF = async (req, res) => {
 // GET /api/admin/leases
 exports.getLeaseHistory = async (req, res) => {
     try {
-        const leases = await prisma.lease.findMany({
-            include: {
-                tenant: true,
-                residents: true, // Include co-tenants
-                unit: {
-                    include: { property: true }
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 15;
+        const skip = (page - 1) * limit;
+
+        const [leases, total] = await Promise.all([
+            prisma.lease.findMany({
+                include: {
+                    tenant: true,
+                    residents: true, // Include co-tenants
+                    unit: {
+                        include: { property: true }
+                    },
+                    bedroom: true
                 },
-                bedroom: true
-            },
-            orderBy: { createdAt: 'desc' }
-        });
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.lease.count()
+        ]);
 
         // Collect all unique tenant emails to check communication logs efficiently
-        const tenantEmails = [...new Set(leases.map(l => l.tenant.email).filter(Boolean))];
+        const tenantEmails = [...new Set(leases.map(l => l.tenant?.email).filter(Boolean))];
 
         // Fetch logs for these tenants
         const sentLogs = await prisma.communicationLog.findMany({
@@ -63,13 +72,12 @@ exports.getLeaseHistory = async (req, res) => {
         const sentEmailSet = new Set(sentLogs.map(log => log.recipient));
 
         const formatted = leases.map(l => {
-            const primaryName = l.tenant.name || `${l.tenant.firstName || ''} ${l.tenant.lastName || ''}`.trim();
+            const primaryName = l.tenant?.name || `${l.tenant?.firstName || ''} ${l.tenant?.lastName || ''}`.trim();
             const residentNames = l.residents.map(r => r.name || `${r.firstName || ''} ${r.lastName || ''}`.trim());
             const allTenants = [primaryName, ...residentNames].filter(Boolean).join(', ');
 
             // Check if credentials were sent to this tenant's email
-            // Use l.tenant.email directly. If no email, they can't have received them.
-            const isCredentialsSent = l.tenant.email && sentEmailSet.has(l.tenant.email);
+            const isCredentialsSent = l.tenant?.email && sentEmailSet.has(l.tenant.email);
 
             return {
                 id: l.id,
@@ -80,8 +88,8 @@ exports.getLeaseHistory = async (req, res) => {
                 tenant: allTenants, // Show all occupants
                 primaryTenantName: primaryName,
                 coTenants: residentNames,
-                tenantFirstName: l.tenant.firstName || (l.tenant.name ? l.tenant.name.split(' ')[0] : ''),
-                tenantLastName: l.tenant.lastName || (l.tenant.name ? l.tenant.name.split(' ').slice(1).join(' ') : ''),
+                tenantFirstName: l.tenant?.firstName || (l.tenant?.name ? l.tenant.name.split(' ')[0] : ''),
+                tenantLastName: l.tenant?.lastName || (l.tenant?.name ? l.tenant.name.split(' ').slice(1).join(' ') : ''),
                 term: l.startDate && l.endDate
                     ? `${l.startDate.toISOString().substring(0, 10)} to ${l.endDate.toISOString().substring(0, 10)}`
                     : 'Dates Pending',
@@ -95,7 +103,16 @@ exports.getLeaseHistory = async (req, res) => {
             };
         });
 
-        res.json(formatted);
+        res.json({
+            status: 'success',
+            data: formatted,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
     } catch (e) {
         console.error(e);
         res.status(500).json({ message: 'Server error' });

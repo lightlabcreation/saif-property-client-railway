@@ -40,6 +40,7 @@ const modulesList = [
     'Sent Emails',
     'Maintenance',
     'Tickets',
+    'Shuttle',
     'Settings'
 ];
 
