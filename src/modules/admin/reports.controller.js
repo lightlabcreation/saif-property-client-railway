@@ -194,7 +194,8 @@ exports.getRentRoll = async (req, res) => {
                     },
                     invoices: {
                         where: { status: { notIn: ['paid', 'draft'] } }
-                    }
+                    },
+                    reserved_by_user: true
                 }
             });
         } catch (err) {
@@ -216,7 +217,8 @@ exports.getRentRoll = async (req, res) => {
                     },
                     invoices: {
                         where: { status: { notIn: ['paid', 'draft'] } }
-                    }
+                    },
+                    reserved_by_user: true
                 }
             });
         }
@@ -309,9 +311,22 @@ exports.getRentRoll = async (req, res) => {
                         status: 'Occupied'
                     });
                 } else {
-                    vacantUnits++;
-                    totalPotentialMonthlyRent += unitPotentialRent;
-                    totalVacancyLoss += unitPotentialRent;
+                    const isReserved = u.reserved_flag;
+                    if (isReserved) {
+                        occupiedUnits++; // Count as occupied for summary if reserved? Or keep separate?
+                    } else {
+                        vacantUnits++;
+                    }
+                    
+                    const displayStatus = isReserved ? 'Reserved' : 'Vacant';
+                    const prospectName = u.reserved_by_user ? (u.reserved_by_user.name || `${u.reserved_by_user.firstName || ''} ${u.reserved_by_user.lastName || ''}`.trim()) : 'Reserved';
+
+                    if (isReserved) {
+                        totalPotentialMonthlyRent += unitPotentialRent;
+                    } else {
+                        totalPotentialMonthlyRent += unitPotentialRent;
+                        totalVacancyLoss += unitPotentialRent;
+                    }
 
                     rentRollArray.push({
                         id: `unit-${u.id}`,
@@ -319,15 +334,15 @@ exports.getRentRoll = async (req, res) => {
                         leaseType: 'Full Unit',
                         unitNumber: u.unitNumber || u.name,
                         bedroomNumber: '-',
-                        tenantName: '-',
+                        tenantName: isReserved ? prospectName : '-',
                         startDate: null,
                         endDate: null,
-                        monthlyRent: unitPotentialRent, // Shows Potential Rent when vacant
+                        monthlyRent: unitPotentialRent, 
                         potentialRent: unitPotentialRent,
-                        vacancyLoss: unitPotentialRent,
+                        vacancyLoss: isReserved ? 0 : unitPotentialRent,
                         outstandingRent: unitRentBalance,
                         outstandingDeposit: unitDepositBalance,
-                        status: 'Vacant'
+                        status: displayStatus
                     });
                 }
             } else {

@@ -321,6 +321,30 @@ exports.getDashboardStats = async (req, res) => {
             unitId: inv.unitId
         }));
 
+        // 10. Reserved Units List
+        const reservedUnits = await prisma.unit.findMany({
+            where: {
+                reserved_flag: true,
+                ...unitFilter
+            },
+            include: {
+                reserved_by_user: true,
+                property: true
+            },
+            orderBy: {
+                tentative_move_in_date: 'asc'
+            }
+        });
+
+        const reservedUnitsList = reservedUnits.map(u => ({
+            id: u.id,
+            tenantName: u.reserved_by_user ? (u.reserved_by_user.name || `${u.reserved_by_user.firstName || ''} ${u.reserved_by_user.lastName || ''}`.trim()) : 'Unknown',
+            building: u.property?.name || 'N/A',
+            unitNumber: u.unitNumber || u.name,
+            moveInDate: u.tentative_move_in_date,
+            reservationDate: u.reservation_date
+        }));
+
         res.json({
             totalProperties,
             totalUnits,
@@ -349,7 +373,8 @@ exports.getDashboardStats = async (req, res) => {
                 total: totalVehiclesCount,
                 unauthorized: unauthorizedVehiclesCount
             },
-            pendingRefunds: pendingRefundsList
+            pendingRefunds: pendingRefundsList,
+            reservedUnits: reservedUnitsList
         });
     } catch (error) {
         console.error('Dashboard Stats Error:', error);
