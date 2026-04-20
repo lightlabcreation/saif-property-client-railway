@@ -21,10 +21,12 @@ router.post('/requests/:id/:action', checkPermission('Shuttle', 'edit'), shuttle
 // 3. App Access / Drivers (Users)
 router.get('/users', checkPermission('Shuttle', 'view'), shuttleController.getUsers);
 router.post('/users', checkPermission('Shuttle', 'add'), shuttleController.createDriver);
-router.put('/users/:id', checkPermission('Shuttle', 'edit'), shuttleController.updateUser);
+router.put('/users/:id', checkPermission('Shuttle', 'edit'), shuttleController.updateUserStatus); // Specialized for status
+router.patch('/users/:id/status', checkPermission('Shuttle', 'edit'), shuttleController.updateUserStatus); 
 router.delete('/users/:id', checkPermission('Shuttle', 'delete'), shuttleController.deleteUser);
 router.post('/send-invitation', checkPermission('Shuttle', 'add'), shuttleController.sendInvitation);
 router.get('/email-templates', checkPermission('Shuttle', 'view'), shuttleController.getTemplates);
 router.post('/invite-pms-tenants', checkPermission('Shuttle', 'add'), shuttleController.invitePMSTenants);
+router.post('/bulk-status', checkPermission('Shuttle', 'edit'), shuttleController.bulkUpdateAccess);
 
 module.exports = router;

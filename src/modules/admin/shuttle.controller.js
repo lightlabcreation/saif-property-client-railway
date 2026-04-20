@@ -226,10 +226,10 @@ const createDriver = catchAsync(async (req, res) => {
  * @desc    Update a shuttle user (Tenant or Driver)
  * @route   PUT /api/admin/shuttle/users/:id
  */
-const updateUser = catchAsync(async (req, res) => {
+const updateUserStatus = catchAsync(async (req, res) => {
   try {
     const { id } = req.params;
-    const data = await proxyRequest('PATCH', `/users/${id}`, req.body);
+    const data = await proxyRequest('PATCH', `/users/${id}/status`, req.body);
     res.json(data);
   } catch (error) {
     res.status(error.status || 500).json(error);
@@ -348,9 +348,23 @@ module.exports = {
   updateTrip,
   createRequest,
   createDriver,
-  updateUser,
+  updateUserStatus,
   deleteUser,
   sendInvitation,
   getTemplates,
-  invitePMSTenants
+  invitePMSTenants,
+  bulkUpdateAccess: catchAsync(async (req, res) => {
+    try {
+      const { userIds, status } = req.body;
+      if (!userIds || !Array.isArray(userIds)) {
+        return res.status(400).json({ success: false, message: 'Invalid userIds' });
+      }
+
+      // Call Shuttle's Bulk Status Endpoint directly - Much more efficient!
+      const data = await proxyRequest('POST', '/users/bulk-status', { ids: userIds, status });
+      res.json(data);
+    } catch (error) {
+      res.status(error.status || 500).json(error);
+    }
+  })
 };
