@@ -175,7 +175,9 @@ exports.getRentRoll = async (req, res) => {
                 where: {
                     OR: [
                         { unit_status: 'ACTIVE' },
-                        { unit_status: { equals: undefined } } // Fallback for schema mismatch
+                        { unit_status: { equals: undefined } },
+                        { reserved_flag: true },
+                        { bedroomsList: { some: { reserved_flag: true } } }
                     ]
                 },
                 include: {
@@ -321,7 +323,7 @@ exports.getRentRoll = async (req, res) => {
                     }
                     
                     const displayStatus = isReserved ? 'Reserved' : 'Vacant';
-                    const prospectName = u.reserved_by_user ? (u.reserved_by_user.name || `${u.reserved_by_user.firstName || ''} ${u.reserved_by_user.lastName || ''}`.trim()) : 'Reserved';
+                    const prospectName = u.reserved_by_user ? (u.reserved_by_user.name || `${u.reserved_by_user.firstName || ''} ${u.reserved_by_user.lastName || ''}`.trim()) : (u.status_note || 'Reserved');
 
                     if (isReserved) {
                         totalPotentialMonthlyRent += unitPotentialRent;
@@ -405,7 +407,7 @@ exports.getRentRoll = async (req, res) => {
                                 });
                             } else if (bedroom.reserved_flag) {
                                 totalPotentialMonthlyRent += bPotentialRent;
-                                const prospectName = bedroom.reserved_by_user ? (bedroom.reserved_by_user.name || `${bedroom.reserved_by_user.firstName || ''} ${bedroom.reserved_by_user.lastName || ''}`.trim()) : 'Reserved';
+                                const prospectName = bedroom.reserved_by_user ? (bedroom.reserved_by_user.name || `${bedroom.reserved_by_user.firstName || ''} ${bedroom.reserved_by_user.lastName || ''}`.trim()) : (u.status_note || 'Reserved');
                                 rentRollArray.push({
                                     id: `bed-${bedroom.id}`,
                                     parentUnitId: u.id,

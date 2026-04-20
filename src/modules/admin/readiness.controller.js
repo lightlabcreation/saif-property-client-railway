@@ -50,15 +50,28 @@ exports.getBuildings = async (req, res) => {
 
 exports.getReadinessStats = async (req, res) => {
     try {
-        const { propertyId } = req.query;
-        const where = {};
-        if (propertyId) where.propertyId = parseInt(propertyId);
+        const { propertyId, showLeased } = req.query;
+        const isShowLeased = showLeased === 'true';
+        const where = { AND: [] };
+        if (propertyId) where.AND.push({ propertyId: parseInt(propertyId) });
+        
+        // Match dashboard logic: Filter by lease history
+        if (!isShowLeased) {
+            where.AND.push({ leases: { none: {} } });
+        }
 
-        const units = await prisma.unit.findMany({ where });
+        const units = await prisma.unit.findMany({ 
+            where,
+            include: { bedroomsList: true }
+        });
 
         const totalUnits = units.length;
-        const readyForLeasing = units.filter(u => u.ready_for_leasing).length;
-        const reservedUnits = units.filter(u => u.reserved_flag).length;
+        const readyForLeasing = units.filter(u => u.ready_for_leasing || u.unit_status === 'ACTIVE').length;
+        
+        // Consistent reservation count
+        const reservedUnits = units.filter(u => 
+            u.reserved_flag || u.bedroomsList.some(b => b.reserved_flag)
+        ).length;
         
         const now = new Date();
         now.setHours(0,0,0,0);
@@ -113,7 +126,15 @@ exports.getReadinessDashboard = async (req, res) => {
         if (status) {
             if (status === 'Occupied') {
                 where.AND.push({ leases: { some: { status: 'Active' } } });
-            } else if (['Available', 'Reserved', 'Unavailable'].includes(status)) {
+            } else if (status === 'Reserved') {
+                where.AND.push({
+                    OR: [
+                        { availability_status: 'Reserved' },
+                        { reserved_flag: true },
+                        { bedroomsList: { some: { reserved_flag: true } } }
+                    ]
+                });
+            } else if (['Available', 'Unavailable'].includes(status)) {
                 where.AND.push({ availability_status: status });
             } else {
                 where.AND.push({ unit_status: status });
@@ -154,6 +175,9 @@ exports.getReadinessDashboard = async (req, res) => {
             include: {
                 property: true,
                 reserved_by_user: true,
+                bedroomsList: {
+                    include: { reserved_by_user: true }
+                },
                 leases: {
                     where: { status: 'Active' },
                     orderBy: { createdAt: 'desc' },
@@ -223,7 +247,9 @@ exports.getReadinessDashboard = async (req, res) => {
                 dynamicStage = `${pendingStep.label} ${statusSuffix}`;
             }
 
-            if (u.reserved_flag) {
+            const isReserved = u.is_reserved || u.reserved_flag || u.bedroomsList.some(b => b.reserved_flag);
+
+            if (isReserved) {
                 dynamicStage = isFullyReady ? 'Reserved – Ready' : (pendingStep ? `Reserved – Not Ready (${pendingStep.label})` : 'Reserved – Not Ready');
             } else if (isFullyReady) {
                 dynamicStage = 'Unit Ready';
@@ -240,10 +266,10 @@ exports.getReadinessDashboard = async (req, res) => {
                 daysLate,
                 marketAge,
                 marketAgeLabel,
-                reserved: u.reserved_flag,
+                reserved: isReserved,
                 isActive: u.ready_for_leasing,
-                reservedBy: u.reserved_by_user?.name || null,
-                moveInDate: u.tentative_move_in_date,
+                reservedBy: u.reserved_by_user?.name || u.status_note || u.bedroomsList.find(b => b.reserved_flag)?.reserved_by_user?.name || null,
+                moveInDate: u.tentative_move_in_date || u.bedroomsList.find(b => b.reserved_flag)?.tentative_move_in_date,
                 targetDates: {
                     gc_delivered: u.gc_delivered_target_date,
                     gc_deficiencies: u.gc_deficiencies_target_date,

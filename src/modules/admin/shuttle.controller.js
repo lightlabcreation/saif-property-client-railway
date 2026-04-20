@@ -20,7 +20,8 @@ const proxyRequest = async (method, url, data = null, params = {}, headers = {})
       timeout: 10000,
       headers: { 
         ...headers,
-        'User-Agent': 'PMS-Backend-Proxy'
+        'User-Agent': 'PMS-Backend-Proxy',
+        'x-shuttle-proxy-key': process.env.SH_INTERNAL_KEY || 'shuttle_secret_123'
       }
     };
 

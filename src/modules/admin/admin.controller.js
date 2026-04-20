@@ -325,11 +325,31 @@ exports.getDashboardStats = async (req, res) => {
         const [reservedUnits, reservedBedrooms] = await Promise.all([
             prisma.unit.findMany({
                 where: {
-                    reserved_flag: true,
-                    ...unitFilter
+                    AND: [
+                        // Logic: Must be reserved (flag, status, or bedroom)
+                        {
+                            OR: [
+                                { availability_status: 'Reserved' },
+                                { reserved_flag: true },
+                                { bedroomsList: { some: { reserved_flag: true } } }
+                            ]
+                        },
+                        // Logic: MUST have a person or a note assigned
+                        {
+                            OR: [
+                                { reserved_by_id: { not: null } },
+                                { status_note: { not: null, not: "" } },
+                                { bedroomsList: { some: { reserved_by_id: { not: null } } } }
+                            ]
+                        }
+                    ],
+                    ...(parsedOwnerId ? { propertyId: { in: propertyIds } } : {})
                 },
                 include: {
                     reserved_by_user: true,
+                    bedroomsList: {
+                        include: { reserved_by_user: true }
+                    },
                     property: true,
                     leases: { select: { id: true } }
                 },
@@ -337,10 +357,13 @@ exports.getDashboardStats = async (req, res) => {
                     tentative_move_in_date: 'asc'
                 }
             }),
+            // Keep bedrooms query for specific bedroom-only reservations if needed, 
+            // but the Unit query above now covers units that have reserved bedrooms.
             prisma.bedroom.findMany({
                 where: {
                     reserved_flag: true,
-                    unit: unitFilter
+                    reserved_by_id: { not: null },
+                    unit: (parsedOwnerId ? { propertyId: { in: propertyIds } } : {})
                 },
                 include: {
                     reserved_by_user: true,
@@ -358,24 +381,48 @@ exports.getDashboardStats = async (req, res) => {
         ]);
 
         const reservedUnitsList = [
-            ...reservedUnits.map(u => ({
-                id: `unit-${u.id}`,
-                tenantName: u.reserved_by_user ? (u.reserved_by_user.name || `${u.reserved_by_user.firstName || ''} ${u.reserved_by_user.lastName || ''}`.trim()) : 'Unknown',
-                building: u.property?.name || 'N/A',
-                unitNumber: u.unitNumber || u.name,
-                moveInDate: u.tentative_move_in_date,
-                reservationDate: u.reservation_date,
-                isNewConstruction: u.leases.length === 0
-            })),
-            ...reservedBedrooms.map(b => ({
-                id: `bed-${b.id}`,
-                tenantName: b.reserved_by_user ? (b.reserved_by_user.name || `${b.reserved_by_user.firstName || ''} ${b.reserved_by_user.lastName || ''}`.trim()) : 'Unknown',
-                building: b.unit?.property?.name || 'N/A',
-                unitNumber: `${b.unit?.unitNumber || b.unit?.name} (Bed ${b.bedroomNumber})`,
-                moveInDate: b.tentative_move_in_date,
-                reservationDate: b.reservation_date,
-                isNewConstruction: b.unit?.leases.length === 0
-            }))
+            ...reservedUnits.map(u => {
+                const reservedBedroom = u.bedroomsList.find(b => b.reserved_flag);
+                const isBedroomRes = !u.reserved_flag && reservedBedroom;
+                
+                const getBestName = (user) => {
+                    if (!user) return null;
+                    if (user.name) return user.name;
+                    if (user.firstName) return `${user.firstName} ${user.lastName || ''}`.trim();
+                    return null;
+                };
+
+                return {
+                    id: `unit-${u.id}`,
+                    tenantName: getBestName(u.reserved_by_user) || u.status_note || getBestName(reservedBedroom?.reserved_by_user) || 'Anonymous Reservation',
+                    building: u.property?.name || 'N/A',
+                    unitNumber: isBedroomRes ? `${u.unitNumber || u.name} (Bed ${reservedBedroom.bedroomNumber})` : (u.unitNumber || u.name),
+                    moveInDate: u.tentative_move_in_date || reservedBedroom?.tentative_move_in_date,
+                    reservationDate: u.reservation_date || reservedBedroom?.reservation_date,
+                    isNewConstruction: u.leases.length === 0,
+                    isBedroom: !!isBedroomRes
+                };
+            }),
+            // Filter out bedrooms that are already covered by the unit-level mapping above to avoid duplicates
+            ...reservedBedrooms.filter(b => !reservedUnits.some(u => u.id === b.unitId)).map(b => {
+                const getBestName = (user) => {
+                    if (!user) return null;
+                    if (user.name) return user.name;
+                    if (user.firstName) return `${user.firstName} ${user.lastName || ''}`.trim();
+                    return null;
+                };
+
+                return {
+                    id: `bed-${b.id}`,
+                    tenantName: getBestName(b.reserved_by_user) || 'Anonymous Reservation',
+                    building: b.unit?.property?.name || 'N/A',
+                    unitNumber: `${b.unit?.unitNumber || b.unit?.name} (Bed ${b.bedroomNumber})`,
+                    moveInDate: b.tentative_move_in_date,
+                    reservationDate: b.reservation_date,
+                    isNewConstruction: b.unit?.leases.length === 0,
+                    isBedroom: true
+                };
+            })
         ].sort((a, b) => new Date(a.moveInDate || 0) - new Date(b.moveInDate || 0));
 
         res.json({
