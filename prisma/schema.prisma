@@ -58,6 +58,7 @@ model User {
   permissions       Permission[]
   unit              Unit?              @relation(fields: [unitId], references: [id])
   reservedUnits     Unit[]             @relation("UnitReservedByUser")
+  reservedBedrooms  Bedroom[]          @relation("BedroomReservedByUser")
   building          Property?          @relation("BuildingTenants", fields: [buildingId], references: [id])
   preferredLanguage String?            @default("English")
   auditLogs         AuditLog[]
@@ -229,10 +230,19 @@ model Bedroom {
   rentAmount    Decimal  @default(0.000000000000000000000000000000)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  
+  // Reservation Section
+  reserved_flag           Boolean   @default(false)
+  reserved_by_id          Int?
+  reservation_date        DateTime?
+  tentative_move_in_date  DateTime?
+  reserved_by_user        User?     @relation("BedroomReservedByUser", fields: [reserved_by_id], references: [id])
+
   unit          Unit     @relation(fields: [unitId], references: [id], map: "Bedroom_unitId_fkey")
   leases        Lease[]
 
   @@index([unitId], map: "Bedroom_unitId_fkey")
+  @@index([reserved_flag])
   @@map("bedroom")
 }
 

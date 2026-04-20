@@ -322,28 +322,61 @@ exports.getDashboardStats = async (req, res) => {
         }));
 
         // 10. Reserved Units List
-        const reservedUnits = await prisma.unit.findMany({
-            where: {
-                reserved_flag: true,
-                ...unitFilter
-            },
-            include: {
-                reserved_by_user: true,
-                property: true
-            },
-            orderBy: {
-                tentative_move_in_date: 'asc'
-            }
-        });
+        const [reservedUnits, reservedBedrooms] = await Promise.all([
+            prisma.unit.findMany({
+                where: {
+                    reserved_flag: true,
+                    ...unitFilter
+                },
+                include: {
+                    reserved_by_user: true,
+                    property: true,
+                    leases: { select: { id: true } }
+                },
+                orderBy: {
+                    tentative_move_in_date: 'asc'
+                }
+            }),
+            prisma.bedroom.findMany({
+                where: {
+                    reserved_flag: true,
+                    unit: unitFilter
+                },
+                include: {
+                    reserved_by_user: true,
+                    unit: {
+                        include: {
+                            property: true,
+                            leases: { select: { id: true } }
+                        }
+                    }
+                },
+                orderBy: {
+                    tentative_move_in_date: 'asc'
+                }
+            })
+        ]);
 
-        const reservedUnitsList = reservedUnits.map(u => ({
-            id: u.id,
-            tenantName: u.reserved_by_user ? (u.reserved_by_user.name || `${u.reserved_by_user.firstName || ''} ${u.reserved_by_user.lastName || ''}`.trim()) : 'Unknown',
-            building: u.property?.name || 'N/A',
-            unitNumber: u.unitNumber || u.name,
-            moveInDate: u.tentative_move_in_date,
-            reservationDate: u.reservation_date
-        }));
+        const reservedUnitsList = [
+            ...reservedUnits.map(u => ({
+                id: `unit-${u.id}`,
+                tenantName: u.reserved_by_user ? (u.reserved_by_user.name || `${u.reserved_by_user.firstName || ''} ${u.reserved_by_user.lastName || ''}`.trim()) : 'Unknown',
+                building: u.property?.name || 'N/A',
+                unitNumber: u.unitNumber || u.name,
+                moveInDate: u.tentative_move_in_date,
+                reservationDate: u.reservation_date,
+                isNewConstruction: u.leases.length === 0
+            })),
+            ...reservedBedrooms.map(b => ({
+                id: `bed-${b.id}`,
+                tenantName: b.reserved_by_user ? (b.reserved_by_user.name || `${b.reserved_by_user.firstName || ''} ${b.reserved_by_user.lastName || ''}`.trim()) : 'Unknown',
+                building: b.unit?.property?.name || 'N/A',
+                unitNumber: `${b.unit?.unitNumber || b.unit?.name} (Bed ${b.bedroomNumber})`,
+                moveInDate: b.tentative_move_in_date,
+                reservationDate: b.reservation_date,
+                isNewConstruction: b.unit?.leases.length === 0
+            }))
+        ].sort((a, b) => new Date(a.moveInDate || 0) - new Date(b.moveInDate || 0));
 
         res.json({
             totalProperties,

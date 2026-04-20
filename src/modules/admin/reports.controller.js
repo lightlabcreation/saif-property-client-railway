@@ -185,7 +185,8 @@ exports.getRentRoll = async (req, res) => {
                             leases: {
                                 where: { status: 'Active' },
                                 include: { tenant: true }
-                            }
+                            },
+                            reserved_by_user: true
                         }
                     },
                     leases: {
@@ -208,7 +209,8 @@ exports.getRentRoll = async (req, res) => {
                             leases: {
                                 where: { status: 'Active' },
                                 include: { tenant: true }
-                            }
+                            },
+                            reserved_by_user: true
                         }
                     },
                     leases: {
@@ -375,7 +377,7 @@ exports.getRentRoll = async (req, res) => {
                             });
                         }
 
-                        if (bLease || bedroom.status === 'Occupied') {
+                        if (bLease || bedroom.status === 'Occupied' || bedroom.reserved_flag) {
                             occupiedBedrooms++;
                             unitIsFullyVacant = false;
 
@@ -386,6 +388,7 @@ exports.getRentRoll = async (req, res) => {
 
                                 rentRollArray.push({
                                     id: `bed-${bedroom.id}`,
+                                    parentUnitId: u.id,
                                     buildingName: u.property?.name || 'N/A',
                                     leaseType: 'Bedroom Lease',
                                     unitNumber: u.unitNumber || u.name,
@@ -400,11 +403,32 @@ exports.getRentRoll = async (req, res) => {
                                     outstandingDeposit: bDepositBalance,
                                     status: 'Occupied'
                                 });
+                            } else if (bedroom.reserved_flag) {
+                                totalPotentialMonthlyRent += bPotentialRent;
+                                const prospectName = bedroom.reserved_by_user ? (bedroom.reserved_by_user.name || `${bedroom.reserved_by_user.firstName || ''} ${bedroom.reserved_by_user.lastName || ''}`.trim()) : 'Reserved';
+                                rentRollArray.push({
+                                    id: `bed-${bedroom.id}`,
+                                    parentUnitId: u.id,
+                                    buildingName: u.property?.name || 'N/A',
+                                    leaseType: 'Bedroom Lease',
+                                    unitNumber: u.unitNumber || u.name,
+                                    bedroomNumber: bedroom.bedroomNumber,
+                                    tenantName: prospectName,
+                                    startDate: null,
+                                    endDate: null,
+                                    monthlyRent: bPotentialRent,
+                                    potentialRent: bPotentialRent,
+                                    vacancyLoss: 0,
+                                    outstandingRent: 0,
+                                    outstandingDeposit: 0,
+                                    status: 'Reserved'
+                                });
                             } else {
                                 // Occupied but no lease found (fallback)
                                 totalPotentialMonthlyRent += bPotentialRent;
                                 rentRollArray.push({
                                     id: `bed-${bedroom.id}`,
+                                    parentUnitId: u.id,
                                     buildingName: u.property?.name || 'N/A',
                                     leaseType: 'Bedroom Lease',
                                     unitNumber: u.unitNumber || u.name,
@@ -428,6 +452,7 @@ exports.getRentRoll = async (req, res) => {
 
                             rentRollArray.push({
                                 id: `bed-${bedroom.id}`,
+                                parentUnitId: u.id,
                                 buildingName: u.property?.name || 'N/A',
                                 leaseType: 'Bedroom Lease',
                                 unitNumber: u.unitNumber || u.name,

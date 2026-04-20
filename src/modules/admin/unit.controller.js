@@ -288,24 +288,50 @@ exports.updateUnit = async (req, res) => {
     try {
         const { id } = req.params;
         const unitId = parseInt(id);
-        const { unitNumber, unitType, floor, bedrooms, rentalMode, status, propertyId } = req.body;
+        const { unitNumber, unitType, floor, bedrooms, rentalMode, status, propertyId, bedroomId } = req.body;
 
-        // Hard Reservation Lock Logic
+        // --- Step 1: Hard Reservation Lock Logic (Duplicate / Occupancy Check) ---
         if (req.body.reserved_flag === true) {
-            const activeLease = await prisma.lease.findFirst({
-                where: { unitId: unitId, status: 'Active' }
-            });
-            if (activeLease) {
-                return res.status(400).json({ 
-                    message: 'HARD LOCK: Cannot reserve this unit because it currently has an active lease. Please end the active lease before reserving.' 
+            if (bedroomId) {
+                const bId = parseInt(bedroomId);
+                // Check for active lease
+                const activeLease = await prisma.lease.findFirst({
+                    where: { bedroomId: bId, status: 'Active' }
                 });
+                if (activeLease) {
+                    return res.status(400).json({ message: 'HARD LOCK: Cannot reserve this bedroom because it has an active lease.' });
+                }
+                // Check for existing reservation
+                const existingRes = await prisma.bedroom.findUnique({
+                    where: { id: bId },
+                    select: { reserved_flag: true }
+                });
+                if (existingRes?.reserved_flag) {
+                    return res.status(400).json({ message: 'Error: This bedroom is already reserved.' });
+                }
+            } else {
+                // Unit-level check
+                const activeLease = await prisma.lease.findFirst({
+                    where: { unitId: unitId, status: 'Active' }
+                });
+                if (activeLease) {
+                    return res.status(400).json({ 
+                        message: 'HARD LOCK: Cannot reserve this unit because it currently has an active lease. Please end the active lease before reserving.' 
+                    });
+                }
+                const existingRes = await prisma.unit.findUnique({
+                    where: { id: unitId },
+                    select: { reserved_flag: true }
+                });
+                if (existingRes?.reserved_flag) {
+                    return res.status(400).json({ message: 'Error: This unit is already reserved.' });
+                }
             }
         }
 
-        
         let resUserId = req.body.reserved_by_id !== undefined ? (req.body.reserved_by_id ? parseInt(req.body.reserved_by_id) : null) : undefined;
 
-        // Phase 2: Quick Reservation Logic (Find or Create User)
+        // --- Step 2: Quick Reservation Logic (Find or Create User) ---
         if (req.body.reserved_flag && req.body.reserve_email) {
             const { reserve_firstName, reserve_lastName, reserve_email, reserve_phone } = req.body;
             const email = reserve_email.toLowerCase().trim();
@@ -314,7 +340,6 @@ exports.updateUnit = async (req, res) => {
             
             if (targetUser) {
                 resUserId = targetUser.id;
-                // Update basic info if missing or provided
                 await prisma.user.update({
                     where: { id: targetUser.id },
                     data: {
@@ -340,8 +365,23 @@ exports.updateUnit = async (req, res) => {
             }
         }
         
+        // --- Step 3: Performance Update (Bedroom vs Unit) ---
+        if (bedroomId) {
+            const bId = parseInt(bedroomId);
+            const updatedBedroom = await prisma.bedroom.update({
+                where: { id: bId },
+                data: {
+                    reserved_flag: req.body.reserved_flag,
+                    reserved_by_id: resUserId,
+                    reservation_date: req.body.reserved_flag ? new Date() : null,
+                    tentative_move_in_date: req.body.tentative_move_in_date ? new Date(req.body.tentative_move_in_date) : null
+                }
+            });
+            return res.json(updatedBedroom);
+        }
+
         const updatedUnit = await prisma.unit.update({
-            where: { id: parseInt(id) },
+            where: { id: unitId },
             data: {
                 unitNumber,
                 unitType,
@@ -350,7 +390,6 @@ exports.updateUnit = async (req, res) => {
                 rentalMode,
                 status,
                 propertyId: propertyId ? parseInt(propertyId) : undefined,
-                // readiness fields
                 gc_delivered_target_date: req.body.gc_delivered_target_date ? new Date(req.body.gc_delivered_target_date) : undefined,
                 reserved_flag: req.body.reserved_flag !== undefined ? req.body.reserved_flag : undefined,
                 reserved_by_id: resUserId,
@@ -363,6 +402,7 @@ exports.updateUnit = async (req, res) => {
         });
         res.json(updatedUnit);
     } catch (error) {
+        console.error('Update Unit Error:', error);
         res.status(500).json({ message: 'Error updating unit' });
     }
 };

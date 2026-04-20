@@ -132,7 +132,6 @@ const updateRequestStatus = catchAsync(async (req, res) => {
 const getUsers = catchAsync(async (req, res) => {
   try {
     const data = await proxyRequest('GET', '/users');
-    console.log('DEBUG: Shuttle Users Data Received:', JSON.stringify(data.users, null, 2));
     res.json(data);
   } catch (error) {
     res.status(error.status || 500).json(error);

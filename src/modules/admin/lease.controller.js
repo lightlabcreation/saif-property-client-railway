@@ -510,21 +510,31 @@ exports.activateLease = catchAsync(async (req, res, next) => {
                 where: { id: uId },
                 data: {
                     status: 'Fully Booked',
-                    rentalMode: 'FULL_UNIT'
+                    rentalMode: 'FULL_UNIT',
+                    reserved_flag: false,
+                    reserved_by_id: null
                 }
             });
 
             if (lease.unit.bedroomsList.length > 0) {
                 await tx.bedroom.updateMany({
                     where: { unitId: uId },
-                    data: { status: 'Occupied' }
+                    data: { 
+                        status: 'Occupied',
+                        reserved_flag: false,
+                        reserved_by_id: null
+                    }
                 });
             }
         } else {
             // Bedroom Lease: Mark specific bedroom as Occupied
             await tx.bedroom.update({
                 where: { id: bId },
-                data: { status: 'Occupied' }
+                data: { 
+                    status: 'Occupied',
+                    reserved_flag: false,
+                    reserved_by_id: null
+                }
             });
 
             // Update unit rental mode to BEDROOM_WISE
@@ -872,7 +882,9 @@ exports.createLease = catchAsync(async (req, res, next) => {
                     where: { id: uId },
                     data: {
                         status: 'Fully Booked',
-                        rentalMode: 'FULL_UNIT'
+                        rentalMode: 'FULL_UNIT',
+                        reserved_flag: false,
+                        reserved_by_id: null
                     }
                 });
 
@@ -880,7 +892,11 @@ exports.createLease = catchAsync(async (req, res, next) => {
                 if (unit.bedroomsList.length > 0) {
                     await tx.bedroom.updateMany({
                         where: { unitId: uId },
-                        data: { status: 'Occupied' }
+                        data: { 
+                            status: 'Occupied',
+                            reserved_flag: false,
+                            reserved_by_id: null
+                        }
                     });
                 }
 
@@ -893,7 +909,11 @@ exports.createLease = catchAsync(async (req, res, next) => {
                 // Bedroom Lease: Mark specific bedroom as Occupied
                 await tx.bedroom.update({
                     where: { id: bId },
-                    data: { status: 'Occupied' }
+                    data: { 
+                        status: 'Occupied',
+                        reserved_flag: false,
+                        reserved_by_id: null
+                    }
                 });
 
                 // Ensure unit is in BEDROOM_WISE mode when a bedroom lease is created
