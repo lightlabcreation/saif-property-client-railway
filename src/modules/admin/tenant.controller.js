@@ -532,6 +532,28 @@ exports.deleteTenant = async (req, res) => {
                 });
             }
 
+            // --- FIXED: Cleanup Reservations (Units & Bedrooms reserved by this user) ---
+            await prisma.unit.updateMany({
+                where: { reserved_by_id: id },
+                data: {
+                    reserved_flag: false,
+                    reserved_by_id: null,
+                    reservation_date: null,
+                    tentative_move_in_date: null
+                }
+            });
+
+            await prisma.bedroom.updateMany({
+                where: { reserved_by_id: id },
+                data: {
+                    reserved_flag: false,
+                    reserved_by_id: null,
+                    reservation_date: null,
+                    tentative_move_in_date: null
+                }
+            });
+            // -------------------------------------------------------------------------
+
             // 2. Cleanup references (order matters: dependents before parents)
             await prisma.lease.deleteMany({ where: { tenantId: id } });
             await prisma.insurance.deleteMany({ where: { userId: id } });
