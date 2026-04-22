@@ -29,4 +29,10 @@ router.get('/email-templates', checkPermission('Shuttle', 'view'), shuttleContro
 router.post('/invite-pms-tenants', checkPermission('Shuttle', 'add'), shuttleController.invitePMSTenants);
 router.post('/bulk-status', checkPermission('Shuttle', 'edit'), shuttleController.bulkUpdateAccess);
 
+// 4. Standard Locations
+router.get('/trips/locations', checkPermission('Shuttle', 'view'), shuttleController.getLocations);
+router.post('/trips/locations', checkPermission('Shuttle', 'add'), shuttleController.addLocation);
+router.put('/trips/locations/:id', checkPermission('Shuttle', 'edit'), shuttleController.updateLocation);
+router.delete('/trips/locations/:id', checkPermission('Shuttle', 'delete'), shuttleController.deleteLocation);
+
 module.exports = router;

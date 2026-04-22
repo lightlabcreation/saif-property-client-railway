@@ -367,5 +367,39 @@ module.exports = {
     } catch (error) {
       res.status(error.status || 500).json(error);
     }
+  }),
+  getLocations: catchAsync(async (req, res) => {
+    try {
+      const data = await proxyRequest('GET', '/trips/locations');
+      res.json(data);
+    } catch (error) {
+      res.status(error.status || 500).json(error);
+    }
+  }),
+  addLocation: catchAsync(async (req, res) => {
+    try {
+      const data = await proxyRequest('POST', '/trips/locations', req.body);
+      res.json(data);
+    } catch (error) {
+      res.status(error.status || 500).json(error);
+    }
+  }),
+  updateLocation: catchAsync(async (req, res) => {
+    try {
+      const { id } = req.params;
+      const data = await proxyRequest('PUT', `/trips/locations/${id}`, req.body);
+      res.json(data);
+    } catch (error) {
+      res.status(error.status || 500).json(error);
+    }
+  }),
+  deleteLocation: catchAsync(async (req, res) => {
+    try {
+      const { id } = req.params;
+      const data = await proxyRequest('DELETE', `/trips/locations/${id}`);
+      res.json(data);
+    } catch (error) {
+      res.status(error.status || 500).json(error);
+    }
   })
 };

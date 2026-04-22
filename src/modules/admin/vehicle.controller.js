@@ -42,6 +42,13 @@ exports.getAllVehicles = async (req, res) => {
                                 }
                             },
                             take: 1
+                        },
+                        residentLease: {
+                            include: {
+                                unit: {
+                                    include: { property: true }
+                                }
+                            }
                         }
                     }
                 },
@@ -61,7 +68,7 @@ exports.getAllVehicles = async (req, res) => {
         const now = new Date();
 
         let formatted = allVehicles.map(v => {
-            const lease = v.lease || (v.tenant.leases && v.tenant.leases[0]);
+            const lease = v.lease || (v.tenant.leases && v.tenant.leases[0]) || v.tenant.residentLease;
             const isActiveLease = lease && lease.status === 'Active' && 
                                 (!lease.endDate || new Date(lease.endDate) >= now);
             
