@@ -69,8 +69,9 @@ exports.getOutstandingDues = async (req, res) => {
                     invoice: due.invoiceNo,
                     tenant: due.tenant?.name || (due.tenant?.firstName ? `${due.tenant.firstName} ${due.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
                     unit: due.unit?.name || 'Unknown Unit',
+                    propertyId: due.unit?.propertyId, // Added for building filter
                     leaseType: due.unit?.rentalMode === 'FULL_UNIT' ? 'Full Unit' : (due.unit?.rentalMode === 'BEDROOM_WISE' ? 'Bedroom' : 'N/A'),
-                    category: due.category || 'RENT',
+                    category: due.category === 'SECURITY_DEPOSIT' ? 'DEPOSIT' : (due.category || 'RENT'),
                     amount: Math.max(0, balanceDue), // Prevent negative display
                     totalAmount: totalAmount,
                     paidAmount: paidAmt,
@@ -117,6 +118,7 @@ exports.getReceivedPayments = async (req, res) => {
                 tenant: inv?.tenant?.name || (inv?.tenant?.firstName ? `${inv.tenant.firstName} ${inv.tenant.lastName || ''}`.trim() : 'Unknown Tenant'),
                 unit: inv?.unit?.name || 'Unknown Unit',
                 type: inv?.unit?.rentalMode === 'FULL_UNIT' ? 'Full Unit' : 'Bedroom',
+                category: inv?.category === 'SECURITY_DEPOSIT' ? 'DEPOSIT' : (inv?.category || 'RENT'),
                 amount: parseFloat(p.amount), // Correctly shows the ACTUAL payment amount
                 method: p.method || 'N/A',
                 date: p.date ? new Date(p.date).toLocaleDateString('en-GB', {

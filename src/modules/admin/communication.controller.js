@@ -279,13 +279,13 @@ exports.sendMessage = async (req, res) => {
                         },
                         select: { id: true, phone: true, name: true }
                     });
-                } else if (recipient.toLowerCase().includes('all tenants')) {
-                    // All tenants
+                    // All tenants - MUST have an active lease
                     users = await prisma.user.findMany({
                         where: {
                             role: 'TENANT',
                             type: { not: 'RESIDENT' },
                             phone: { not: null },
+                            leases: { some: { status: 'Active' } }, // Strict Active Lease Check
                             ...(buildingId && {
                                 OR: [
                                     { leases: { some: { status: 'Active', unit: { propertyId: parseInt(buildingId) } } } },
@@ -295,12 +295,12 @@ exports.sendMessage = async (req, res) => {
                         },
                         select: { id: true, phone: true, name: true }
                     });
-                } else if (recipient.toLowerCase().includes('all residents')) {
-                    // All residents
+                    // All residents - MUST have an active lease
                     users = await prisma.user.findMany({
                         where: {
                             type: 'RESIDENT',
                             phone: { not: null },
+                            residentLease: { status: 'Active' }, // Strict Active Lease Check
                             ...(buildingId && {
                                 OR: [
                                     { residentLease: { unit: { propertyId: parseInt(buildingId) } } },

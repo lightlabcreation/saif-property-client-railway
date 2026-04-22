@@ -12,28 +12,46 @@ const { proxyRequest } = require('./shuttle.controller');
 // GET /api/admin/tenants
 exports.getAllTenants = async (req, res) => {
     try {
-        const { propertyId, search, page = 1, limit = 10, includePast } = req.query;
+        const { propertyId, search, page = 1, limit = 10, includePast, status } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
         const take = parseInt(limit);
 
         const whereClause = { role: 'TENANT' }; // Show all tenants including residents as requested
 
-        if (propertyId) {
-            const pId = parseInt(propertyId);
-            whereClause.OR = [
+        // Handle Status Filter (e.g. status=Active)
+        if (status === 'Active') {
+            whereClause.AND = [
                 {
-                    leases: {
-                        some: {
-                            unit: { propertyId: pId }
-                        }
-                    }
-                },
-                {
-                    buildingId: pId
+                    OR: [
+                        { leases: { some: { status: 'Active' } } },
+                        { residentLease: { status: 'Active' } }
+                    ]
                 }
             ];
-            
-            // If we don't care about "Active" only, ensure we don't accidentally filter by other things later
+        }
+
+        if (propertyId) {
+            const pId = parseInt(propertyId);
+            const propertyCondition = {
+                OR: [
+                    {
+                        leases: {
+                            some: {
+                                unit: { propertyId: pId }
+                            }
+                        }
+                    },
+                    {
+                        buildingId: pId
+                    }
+                ]
+            };
+
+            if (whereClause.AND) {
+                whereClause.AND.push(propertyCondition);
+            } else {
+                whereClause.OR = propertyCondition.OR;
+            }
         }
 
         if (search) {

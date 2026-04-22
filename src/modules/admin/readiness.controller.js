@@ -258,6 +258,7 @@ exports.getReadinessDashboard = async (req, res) => {
             return {
                 id: u.id,
                 unitNumber: u.unitNumber,
+                unitType: u.unitType || 'N/A', // Added Unit Type
                 building: u.property.name,
                 unit_status: u.unit_status,
                 availability: u.leases.length > 0 ? 'Occupied' : u.availability_status,
