@@ -67,8 +67,50 @@ exports.getAllVehicles = async (req, res) => {
 
         const now = new Date();
 
+        // Collect all unique tenant IDs to check for resident-of-lease membership
+        const tenantIds = [...new Set(allVehicles.map(v => v.tenantId))];
+
+        // Find all active leases where these tenants appear as additional residents
+        // (i.e. listed in the Lease.residents[] many-to-one via leaseId FK on User)
+        // We query Lease where its residents include any of these tenants AND lease is active
+        const residentLeaseMap = {};
+        if (tenantIds.length > 0) {
+            const residentLeases = await prisma.lease.findMany({
+                where: {
+                    status: 'Active',
+                    residents: {
+                        some: {
+                            id: { in: tenantIds }
+                        }
+                    }
+                },
+                include: {
+                    residents: { select: { id: true } },
+                    unit: { include: { property: true } }
+                }
+            });
+
+            // Build a map: tenantId -> active lease (as a resident)
+            for (const lease of residentLeases) {
+                for (const resident of lease.residents) {
+                    if (!residentLeaseMap[resident.id]) {
+                        residentLeaseMap[resident.id] = lease;
+                    }
+                }
+            }
+        }
+
         let formatted = allVehicles.map(v => {
-            const lease = v.lease || (v.tenant.leases && v.tenant.leases[0]) || v.tenant.residentLease;
+            // Check all possible lease sources in priority order:
+            // 1. Direct vehicle lease link
+            // 2. Tenant's own primary active lease (as tenantId)
+            // 3. Tenant's residentLease (via leaseId FK on User - single resident slot)
+            // 4. Any active lease where this tenant is listed as an additional occupant/roommate
+            const lease = v.lease 
+                || (v.tenant.leases && v.tenant.leases[0]) 
+                || v.tenant.residentLease 
+                || residentLeaseMap[v.tenantId];
+
             const isActiveLease = lease && lease.status === 'Active' && 
                                 (!lease.endDate || new Date(lease.endDate) >= now);
             
