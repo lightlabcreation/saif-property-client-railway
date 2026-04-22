@@ -49,6 +49,19 @@ exports.getAllVehicles = async (req, res) => {
                                     include: { property: true }
                                 }
                             }
+                        },
+                        parent: {
+                            include: {
+                                leases: {
+                                    where: { status: 'Active' },
+                                    include: {
+                                        unit: {
+                                            include: { property: true }
+                                        }
+                                    },
+                                    take: 1
+                                }
+                            }
                         }
                     }
                 },
@@ -106,10 +119,12 @@ exports.getAllVehicles = async (req, res) => {
             // 2. Tenant's own primary active lease (as tenantId)
             // 3. Tenant's residentLease (via leaseId FK on User - single resident slot)
             // 4. Any active lease where this tenant is listed as an additional occupant/roommate
+            // 5. Tenant's parent's active lease (if they are a sub-tenant/resident under a parent)
             const lease = v.lease 
                 || (v.tenant.leases && v.tenant.leases[0]) 
                 || v.tenant.residentLease 
-                || residentLeaseMap[v.tenantId];
+                || residentLeaseMap[v.tenantId]
+                || (v.tenant.parent && v.tenant.parent.leases && v.tenant.parent.leases[0]);
 
             const isActiveLease = lease && lease.status === 'Active' && 
                                 (!lease.endDate || new Date(lease.endDate) >= now);
