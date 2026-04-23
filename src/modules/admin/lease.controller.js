@@ -626,7 +626,7 @@ exports.activateLease = catchAsync(async (req, res, next) => {
             const existingDepositInvoice = await tx.invoice.findFirst({
                 where: {
                     leaseId: lease.id,
-                    category: 'SERVICE',
+                    category: { in: ['SERVICE', 'SECURITY_DEPOSIT'] },
                     description: 'Security Deposit'
                 }
             });
@@ -649,7 +649,7 @@ exports.activateLease = catchAsync(async (req, res, next) => {
                         amount: depositAmt,
                         balanceDue: depositAmt,
                         status: 'sent',
-                        category: 'SERVICE',
+                        category: 'SECURITY_DEPOSIT',
                         description: 'Security Deposit',
                         dueDate: startDate
                     }
@@ -1014,7 +1014,7 @@ exports.createLease = catchAsync(async (req, res, next) => {
             const existingDepositInvoice = await tx.invoice.findFirst({
                 where: {
                     leaseId: lease.id,
-                    category: 'SERVICE',
+                    category: { in: ['SERVICE', 'SECURITY_DEPOSIT'] },
                     description: 'Security Deposit'
                 }
             });
@@ -1037,7 +1037,7 @@ exports.createLease = catchAsync(async (req, res, next) => {
                         amount: depositAmt,
                         balanceDue: depositAmt,
                         status: 'sent',
-                        category: 'SERVICE',
+                        category: 'SECURITY_DEPOSIT',
                         description: 'Security Deposit',
                         dueDate: new Date(startDate)
                     }

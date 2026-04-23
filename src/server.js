@@ -41,6 +41,24 @@ async function startServer() {
             console.log(`✅ Recovered ${stuckCount.count} stuck campaigns.`);
         }
 
+        // 💰 RECOVERY: Fix deposit invoices categorized as 'SERVICE'
+        console.log('💰 Scanning for miscategorized deposit invoices...');
+        const updatedDeposits = await prisma.invoice.updateMany({
+            where: {
+                category: 'SERVICE',
+                OR: [
+                    { description: 'Security Deposit' },
+                    { invoiceNo: { startsWith: 'INV-DEP' } }
+                ]
+            },
+            data: {
+                category: 'SECURITY_DEPOSIT'
+            }
+        });
+        if (updatedDeposits.count > 0) {
+            console.log(`✅ Corrected ${updatedDeposits.count} deposit invoices to SECURITY_DEPOSIT.`);
+        }
+
         app.listen(PORT, () => {
             console.log(`🚀 Server running on port ${PORT}`);
         });
