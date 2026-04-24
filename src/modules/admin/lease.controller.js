@@ -8,6 +8,7 @@ const AppError = require('../../utils/AppError');
 const catchAsync = require('../../utils/catchAsync');
 const allowedOrigins = require('../../config/allowedOrigins');
 const { proxyRequest } = require('./shuttle.controller');
+const workflowService = require('../../services/workflow.service');
 
 
 // GET /api/admin/leases/:id/download
@@ -657,6 +658,13 @@ exports.activateLease = catchAsync(async (req, res, next) => {
             }
         }
 
+        // --- NEW: Sync Move-In Dashboard ---
+        await workflowService.syncMoveInStatus(uId, {
+            leaseId: updatedLease.id,
+            bedroomId: updatedLease.bedroomId,
+            targetDate: updatedLease.startDate
+        }, tx);
+
         return updatedLease;
     });
 
@@ -945,6 +953,13 @@ exports.createLease = catchAsync(async (req, res, next) => {
                     data: { bedroomId: bId }
                 });
             }
+
+            // --- NEW: Sync Move-In Dashboard ---
+            await workflowService.syncMoveInStatus(uId, {
+                leaseId: lease.id,
+                bedroomId: bId,
+                targetDate: lease.startDate
+            }, tx);
         } // End of leaseData.status === 'Active' condition
 
         // 3. Auto-create Invoices (Pro-rata + Past Months)

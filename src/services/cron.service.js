@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const prisma = require('../config/prisma');
 const { checkInsuranceExpirations } = require('../modules/admin/insurance.controller');
+const { initMoveOutWorkflow } = require('./workflow.service');
 
 /**
  * Lease Expiry Cron Job
@@ -164,4 +165,47 @@ const initInsuranceCron = () => {
     });
 };
 
-module.exports = { initLeaseCron, initInsuranceCron };
+/**
+ * Move-Out Auto-Trigger Cron Job
+ * Runs once per day at 2:00 AM
+ * Finds leases ending in exactly 30 days
+ */
+const initMoveOutCron = () => {
+    const moveOutCronTime = process.env.MOVEOUT_CRON_TIME || '0 2 * * *';
+
+    console.log(`[Cron] Initializing Move-Out Auto-Trigger cron with schedule: ${moveOutCronTime}`);
+
+    cron.schedule(moveOutCronTime, async () => {
+        console.log('[Cron] Running daily Move-Out auto-trigger check...');
+        
+        const targetDate = new Date();
+        targetDate.setDate(targetDate.getDate() + 30);
+        targetDate.setHours(0, 0, 0, 0);
+
+        try {
+            const leasesEndingSoon = await prisma.lease.findMany({
+                where: {
+                    status: 'Active',
+                    endDate: {
+                        gte: targetDate,
+                        lt: new Date(targetDate.getTime() + 24 * 60 * 60 * 1000)
+                    }
+                }
+            });
+
+            console.log(`[Cron] Found ${leasesEndingSoon.length} leases ending in 30 days.`);
+
+            for (const lease of leasesEndingSoon) {
+                try {
+                    await initMoveOutWorkflow(lease.id);
+                } catch (err) {
+                    console.error(`[Cron] Error initializing move-out for lease ${lease.id}:`, err);
+                }
+            }
+        } catch (error) {
+            console.error('[Cron] Error in Move-Out auto-trigger cron job:', error);
+        }
+    });
+};
+
+module.exports = { initLeaseCron, initInsuranceCron, initMoveOutCron };

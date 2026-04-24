@@ -269,3 +269,51 @@ exports.getVehicles = async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 };
+
+// GET /api/tenant/move-out
+exports.getMoveOutStatus = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const moveOut = await prisma.moveOut.findFirst({
+            where: { lease: { tenantId: userId } },
+            include: { unit: true, lease: true },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        if (!moveOut) return res.status(404).json({ success: false, message: 'No move-out process active' });
+
+        res.json({ success: true, data: moveOut });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// POST /api/tenant/inspections/:id/sign
+exports.signInspection = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { id } = req.params;
+        const { signature } = req.body;
+
+        const inspection = await prisma.inspection.findUnique({
+            where: { id: parseInt(id) },
+            include: { lease: true }
+        });
+
+        if (!inspection || inspection.lease.tenantId !== userId) {
+            return res.status(403).json({ success: false, message: 'Unauthorized or inspection not found' });
+        }
+
+        const updated = await prisma.inspection.update({
+            where: { id: parseInt(id) },
+            data: {
+                tenantSignature: signature,
+                tenantSignedAt: new Date()
+            }
+        });
+
+        res.json({ success: true, data: updated });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};

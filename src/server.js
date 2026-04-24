@@ -1,7 +1,7 @@
 require('dotenv').config();
 const app = require('./app');
 const prisma = require('./config/prisma');
-const { initLeaseCron, initInsuranceCron } = require('./services/cron.service');
+const { initLeaseCron, initInsuranceCron, initMoveOutCron } = require('./services/cron.service');
 const { initMonthlyInvoiceCron } = require('./services/invoice.cron');
 
 const PORT = process.env.PORT || 5000;
@@ -15,6 +15,7 @@ async function startServer() {
         // Initialize cron jobs
         initLeaseCron();
         initInsuranceCron();
+        initMoveOutCron();
         initMonthlyInvoiceCron();
         console.log('DEBUG: JWT_SECRET length:', process.env.JWT_SECRET ? process.env.JWT_SECRET.length : 'undefined');
 

@@ -1,5 +1,6 @@
 const prisma = require('../../config/prisma');
 const { recalculateTimelineHelper } = require('./readiness.controller');
+const workflowService = require('../../services/workflow.service');
 
 // GET /api/admin/units
 exports.getAllUnits = async (req, res) => {
@@ -301,14 +302,7 @@ exports.updateUnit = async (req, res) => {
                 if (activeLease) {
                     return res.status(400).json({ message: 'HARD LOCK: Cannot reserve this bedroom because it has an active lease.' });
                 }
-                // Check for existing reservation
-                const existingRes = await prisma.bedroom.findUnique({
-                    where: { id: bId },
-                    select: { reserved_flag: true }
-                });
-                if (existingRes?.reserved_flag) {
-                    return res.status(400).json({ message: 'Error: This bedroom is already reserved.' });
-                }
+                // Removed self-blocking existingRes check to allow updates
             } else {
                 // Unit-level check
                 const activeLease = await prisma.lease.findFirst({
@@ -319,13 +313,7 @@ exports.updateUnit = async (req, res) => {
                         message: 'HARD LOCK: Cannot reserve this unit because it currently has an active lease. Please end the active lease before reserving.' 
                     });
                 }
-                const existingRes = await prisma.unit.findUnique({
-                    where: { id: unitId },
-                    select: { reserved_flag: true }
-                });
-                if (existingRes?.reserved_flag) {
-                    return res.status(400).json({ message: 'Error: This unit is already reserved.' });
-                }
+                // Removed self-blocking existingRes check to allow updates
             }
         }
 
@@ -377,6 +365,15 @@ exports.updateUnit = async (req, res) => {
                     tentative_move_in_date: req.body.tentative_move_in_date ? new Date(req.body.tentative_move_in_date) : null
                 }
             });
+
+            // --- NEW: Sync Move-In Dashboard ---
+            if (req.body.reserved_flag) {
+                await workflowService.syncMoveInStatus(updatedBedroom.unitId, {
+                    bedroomId: bId,
+                    targetDate: updatedBedroom.tentative_move_in_date
+                });
+            }
+
             return res.json(updatedBedroom);
         }
 
@@ -397,9 +394,18 @@ exports.updateUnit = async (req, res) => {
                 tentative_move_in_date: req.body.tentative_move_in_date ? new Date(req.body.tentative_move_in_date) : undefined,
                 unit_status: req.body.unit_status,
                 availability_status: req.body.availability_status,
+                classification: req.body.classification || undefined,
                 ...(req.body.gc_delivered_target_date ? await recalculateTimelineHelper(req.body.gc_delivered_target_date) : {})
             }
         });
+
+        // --- NEW: Sync Move-In Dashboard ---
+        if (req.body.reserved_flag) {
+            await workflowService.syncMoveInStatus(unitId, {
+                targetDate: updatedUnit.tentative_move_in_date
+            });
+        }
+
         res.json(updatedUnit);
     } catch (error) {
         console.error('Update Unit Error:', error);

@@ -530,121 +530,111 @@ exports.deleteTenant = async (req, res) => {
             });
         }
 
-        await prisma.$transaction(async (prisma) => {
-            // 1. Find any lease (Active or Draft) to vacate unit and bedrooms
-            const anyLease = await prisma.lease.findFirst({
+        await prisma.$transaction(async (tx) => {
+            // 1. Clear references in other tables (Gatekeepers)
+            await tx.company.updateMany({
+                where: { primaryContactId: id },
+                data: { primaryContactId: null }
+            });
+            
+            await tx.unit.updateMany({
+                where: { reserved_by_id: id },
+                data: {
+                    reserved_flag: false,
+                    reserved_by_id: null,
+                    reservation_date: null,
+                    tentative_move_in_date: null
+                }
+            });
+
+            await tx.bedroom.updateMany({
+                where: { reserved_by_id: id },
+                data: {
+                    reserved_flag: false,
+                    reserved_by_id: null,
+                    reservation_date: null,
+                    tentative_move_in_date: null
+                }
+            });
+
+            // 2. Find any lease (Active or Draft) to vacate unit and bedrooms
+            const anyLease = await tx.lease.findFirst({
                 where: { tenantId: id, status: { in: ['Active', 'DRAFT'] } }
             });
 
             if (anyLease) {
-                // Vacate all bedrooms in the unit
-                await prisma.bedroom.updateMany({
+                await tx.bedroom.updateMany({
                     where: { unitId: anyLease.unitId, status: 'Occupied' },
                     data: { status: 'Vacant' }
                 });
-
-                // Set unit to Vacant
-                await prisma.unit.update({
+                await tx.unit.update({
                     where: { id: anyLease.unitId },
                     data: { status: 'Vacant' }
                 });
             }
 
-            // --- FIXED: Cleanup Reservations (Units & Bedrooms reserved by this user) ---
-            await prisma.unit.updateMany({
-                where: { reserved_by_id: id },
-                data: {
-                    reserved_flag: false,
-                    reserved_by_id: null,
-                    reservation_date: null,
-                    tentative_move_in_date: null
-                }
-            });
+            // 3. Deep Cleanup (Ordered for Constraints)
+            // Residents: Handle them first as they are dependents
+            const residentIds = (await tx.user.findMany({ where: { parentId: id }, select: { id: true } })).map(u => u.id);
+            const allTargetIds = [id, ...residentIds];
 
-            await prisma.bedroom.updateMany({
-                where: { reserved_by_id: id },
-                data: {
-                    reserved_flag: false,
-                    reserved_by_id: null,
-                    reservation_date: null,
-                    tentative_move_in_date: null
-                }
-            });
-            // -------------------------------------------------------------------------
+            // Messages & Logs
+            await tx.message.deleteMany({ where: { OR: [{ senderId: { in: allTargetIds } }, { receiverId: { in: allTargetIds } }] } });
+            await tx.communicationLog.deleteMany({ where: { recipientId: { in: allTargetIds } } });
+            await tx.refreshToken.deleteMany({ where: { userId: { in: allTargetIds } } });
+            await tx.quickBooksConfig.deleteMany({ where: { userId: { in: allTargetIds } } });
+            await tx.permission.deleteMany({ where: { userId: { in: allTargetIds } } });
 
-            // 2. Cleanup references (order matters: dependents before parents)
-            await prisma.lease.deleteMany({ where: { tenantId: id } });
-            await prisma.insurance.deleteMany({ where: { userId: id } });
-            await prisma.document.deleteMany({ where: { userId: id } });
-            await prisma.ticket.deleteMany({ where: { userId: id } });
-            await prisma.refreshToken.deleteMany({ where: { userId: id } });
-            // Invoice: delete Transaction -> Payment -> Invoice (FK order)
-            const tenantInvoiceIds = (await prisma.invoice.findMany({ where: { tenantId: id }, select: { id: true } })).map(i => i.id);
-            if (tenantInvoiceIds.length > 0) {
-                const paymentIds = (await prisma.payment.findMany({ where: { invoiceId: { in: tenantInvoiceIds } }, select: { id: true } })).map(p => p.id);
-                await prisma.transaction.deleteMany({ where: { OR: [{ invoiceId: { in: tenantInvoiceIds } }, { paymentId: { in: paymentIds } }] } });
-                await prisma.payment.deleteMany({ where: { invoiceId: { in: tenantInvoiceIds } } });
+            // Maintenance & Workflow
+            await tx.ticket.deleteMany({ where: { userId: { in: allTargetIds } } });
+            await tx.vehicle.deleteMany({ where: { tenantId: { in: allTargetIds } } });
+            await tx.refundAdjustment.deleteMany({ where: { tenantId: { in: allTargetIds } } });
+
+            // Invoices & Financials
+            const invoiceIds = (await tx.invoice.findMany({ where: { tenantId: { in: allTargetIds } }, select: { id: true } })).map(i => i.id);
+            if (invoiceIds.length > 0) {
+                await tx.transaction.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+                await tx.payment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+                await tx.invoiceLineItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+                // Documents linked to invoices
+                await tx.document.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
             }
-            await prisma.invoice.deleteMany({ where: { tenantId: id } });
-            await prisma.refundAdjustment.deleteMany({ where: { tenantId: id } });
-            // Residents: clean all FKs pointing to residents (including tenantId on Lease/Invoice/RefundAdjustment), then delete residents
-            const residentIds = (await prisma.user.findMany({ where: { parentId: id }, select: { id: true } })).map(u => u.id);
-            if (residentIds.length > 0) {
-                await prisma.lease.deleteMany({ where: { tenantId: { in: residentIds } } });
-                const residentInvoiceIds = (await prisma.invoice.findMany({ where: { tenantId: { in: residentIds } }, select: { id: true } })).map(i => i.id);
-                if (residentInvoiceIds.length > 0) {
-                    const residentPaymentIds = (await prisma.payment.findMany({ where: { invoiceId: { in: residentInvoiceIds } }, select: { id: true } })).map(p => p.id);
-                    await prisma.transaction.deleteMany({ where: { OR: [{ invoiceId: { in: residentInvoiceIds } }, { paymentId: { in: residentPaymentIds } }] } });
-                    await prisma.payment.deleteMany({ where: { invoiceId: { in: residentInvoiceIds } } });
-                }
-                await prisma.invoice.deleteMany({ where: { tenantId: { in: residentIds } } });
-                await prisma.refundAdjustment.deleteMany({ where: { tenantId: { in: residentIds } } });
-                await prisma.refreshToken.deleteMany({ where: { userId: { in: residentIds } } });
-                await prisma.insurance.deleteMany({ where: { userId: { in: residentIds } } });
-                await prisma.document.deleteMany({ where: { userId: { in: residentIds } } });
-                await prisma.ticket.deleteMany({ where: { userId: { in: residentIds } } });
-                await prisma.message.deleteMany({ where: { OR: [{ senderId: { in: residentIds } }, { receiverId: { in: residentIds } }] } });
-                await prisma.communicationLog.deleteMany({ where: { recipientId: { in: residentIds } } });
-                await prisma.quickBooksConfig.deleteMany({ where: { userId: { in: residentIds } } });
+            await tx.invoice.deleteMany({ where: { tenantId: { in: allTargetIds } } });
+
+            // Leases & Inspections
+            const leaseIds = (await tx.lease.findMany({ where: { tenantId: { in: allTargetIds } }, select: { id: true } })).map(l => l.id);
+            if (leaseIds.length > 0) {
+                await tx.inspection.deleteMany({ where: { leaseId: { in: leaseIds } } });
+                await tx.moveIn.deleteMany({ where: { leaseId: { in: leaseIds } } });
+                await tx.moveOut.deleteMany({ where: { leaseId: { in: leaseIds } } });
             }
-            await prisma.user.deleteMany({ where: { parentId: id } });
-            await prisma.companyContact.deleteMany({ where: { companyId: id } });
-            await prisma.communicationLog.deleteMany({ where: { recipientId: id } });
-            await prisma.quickBooksConfig.deleteMany({ where: { userId: id } });
-            await prisma.message.deleteMany({
-                where: {
+            await tx.lease.deleteMany({ where: { tenantId: { in: allTargetIds } } });
+
+            // Final Document Cleanup (User Docs & Links)
+            const allDocs = await tx.document.findMany({ 
+                where: { 
                     OR: [
-                        { senderId: id },
-                        { receiverId: id }
+                        { userId: { in: allTargetIds } },
+                        { leaseId: { in: leaseIds } }
                     ]
-                }
-            }); // Clean up messages
-            // Also delete documents linked via DocumentLink
-            const linkedDocuments = await prisma.document.findMany({
-                where: {
-                    links: {
-                        some: {
-                            entityType: 'USER',
-                            entityId: id
-                        }
-                    }
                 },
                 select: { id: true }
             });
-            if (linkedDocuments.length > 0) {
-                const linkedDocIds = linkedDocuments.map(d => d.id);
-                // Delete the DocumentLinks first
-                await prisma.documentLink.deleteMany({
-                    where: {
-                        documentId: { in: linkedDocIds },
-                        entityType: 'USER',
-                        entityId: id
-                    }
-                });
+            const allDocIds = allDocs.map(d => d.id);
+            
+            if (allDocIds.length > 0) {
+                await tx.documentLink.deleteMany({ where: { documentId: { in: allDocIds } } });
+                await tx.insurance.deleteMany({ where: { OR: [{ userId: { in: allTargetIds } }, { uploadedDocumentId: { in: allDocIds } }] } });
+                await tx.document.deleteMany({ where: { id: { in: allDocIds } } });
+            } else {
+                await tx.insurance.deleteMany({ where: { userId: { in: allTargetIds } } });
             }
 
-            // 3. Delete user
-            await prisma.user.delete({ where: { id } });
+            await tx.companyContact.deleteMany({ where: { companyId: { in: allTargetIds } } });
+
+            // 4. Finally Delete Users
+            await tx.user.deleteMany({ where: { parentId: id } });
+            await tx.user.delete({ where: { id } });
         });
 
         res.json({ message: 'Deleted' });

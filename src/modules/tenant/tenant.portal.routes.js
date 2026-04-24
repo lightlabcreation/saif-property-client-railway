@@ -39,4 +39,8 @@ router.get("/vehicles", tenantPortalController.getVehicles);
 
 router.get("/reports", tenantPortalController.getReports);
 
+// Move-In / Move-Out / Inspection
+router.get("/move-out", tenantPortalController.getMoveOutStatus);
+router.post("/inspections/:id/sign", tenantPortalController.signInspection);
+
 module.exports = router;

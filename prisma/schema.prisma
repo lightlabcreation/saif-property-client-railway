@@ -63,6 +63,12 @@ model User {
   preferredLanguage String?            @default("English")
   auditLogs         AuditLog[]
   shuttleUserId     String?            // External ID for Morgan Shuttle App
+  
+  // --- Move-In / Move-Out / Inspection ---
+  inspections       Inspection[]       @relation("Inspector")
+  managedMoveOuts   MoveOut[]          @relation("Manager")
+  overriddenMoveIns MoveIn[]           @relation("OverrideUser")
+  unitHistory       UnitHistory[]
 
   @@index([unitId], map: "user_unitId_fkey")
   @@index([buildingId], map: "user_buildingId_fkey")
@@ -150,6 +156,7 @@ model Unit {
   floor             Int?
   unitNumber        String?
   unitType          String?
+  classification    String             @default("Completed") // New Construction vs Completed
 
   // --- NEW: Unit Readiness & Reservation Module ---
   unit_status        UnitStatus         @default(INACTIVE)
@@ -214,6 +221,13 @@ model Unit {
   users             User[]
   property          Property           @relation(fields: [propertyId], references: [id], map: "Unit_propertyId_fkey")
 
+  // --- Move-In / Move-Out / Inspection ---
+  moveOuts          MoveOut[]
+  moveIns           MoveIn[]
+  prepTasks         UnitPrepTask[]
+  unitHistory       UnitHistory[]
+  inspections       Inspection[]
+
   @@index([propertyId], map: "Unit_propertyId_fkey")
   @@index([unit_status])
   @@index([availability_status])
@@ -267,6 +281,11 @@ model Lease {
   bedroom         Bedroom?    @relation(fields: [bedroomId], references: [id])
   residents       User[]      @relation("LeaseResidents")
   vehicles        Vehicle[]   @relation("LeaseVehicles")
+
+  // --- Move-In / Move-Out / Inspection ---
+  moveIn          MoveIn?
+  moveOut         MoveOut?
+  inspections     Inspection[]
 
   @@index([tenantId], map: "Lease_tenantId_fkey")
   @@index([unitId], map: "Lease_unitId_fkey")
@@ -830,4 +849,187 @@ model AuditLog {
   user      User?    @relation(fields: [userId], references: [id])
 
   @@map("auditlog")
+}
+
+// --- PHASE 1: Move-In / Move-Out / Inspection Models ---
+
+model MoveOut {
+  id              Int            @id @default(autoincrement())
+  leaseId         Int            @unique
+  unitId          Int
+  bedroomId       Int?
+  status          MoveOutStatus  @default(PENDING)
+  targetDate      DateTime?
+  actualDate      DateTime?
+  managerApproved Boolean        @default(false)
+  managerId       Int?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  lease           Lease          @relation(fields: [leaseId], references: [id])
+  unit            Unit           @relation(fields: [unitId], references: [id])
+  manager         User?          @relation("Manager", fields: [managerId], references: [id])
+
+  @@map("moveout")
+}
+
+model MoveIn {
+  id              Int            @id @default(autoincrement())
+  leaseId         Int?           @unique
+  unitId          Int
+  bedroomId       Int?
+  status          MoveInStatus   @default(PENDING)
+  targetDate      DateTime?
+  actualDate      DateTime?
+  overrideFlag    Boolean        @default(false)
+  overrideReason  String?        @db.Text
+  overrideByUserId Int?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  lease           Lease?         @relation(fields: [leaseId], references: [id])
+  unit            Unit           @relation(fields: [unitId], references: [id])
+  overrideUser    User?          @relation("OverrideUser", fields: [overrideByUserId], references: [id])
+
+  @@map("movein")
+}
+
+model InspectionTemplate {
+  id          Int                @id @default(autoincrement())
+  name        String
+  type        InspectionType
+  structure   Json?
+  isLocked    Boolean            @default(false)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  inspections Inspection[]
+
+  @@map("inspectiontemplate")
+}
+
+model Inspection {
+  id                     Int                      @id @default(autoincrement())
+  templateId             Int
+  unitId                 Int
+  bedroomId              Int?
+  leaseId                Int?
+  inspectorId            Int
+  tenantSignature        String?                  @db.Text
+  noDeficiencyConfirmed Boolean                  @default(false)
+  status                 InspectionStatus         @default(DRAFT)
+  completedAt            DateTime?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  template               InspectionTemplate       @relation(fields: [templateId], references: [id])
+  unit                   Unit                     @relation(fields: [unitId], references: [id])
+  lease                  Lease?                   @relation(fields: [leaseId], references: [id])
+  inspector              User                     @relation("Inspector", fields: [inspectorId], references: [id])
+  responses              InspectionItemResponse[]
+
+  @@map("inspection")
+}
+
+model InspectionItemResponse {
+  id           Int               @id @default(autoincrement())
+  inspectionId Int
+  question     String
+  response     String
+  notes        String?           @db.Text
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  media        InspectionMedia[]
+
+  inspection   Inspection        @relation(fields: [inspectionId], references: [id])
+
+  @@map("inspectionitemresponse")
+}
+
+model InspectionMedia {
+  id          Int                    @id @default(autoincrement())
+  responseId  Int
+  url         String
+  annotations String?                @db.Text
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  response    InspectionItemResponse @relation(fields: [responseId], references: [id])
+
+  @@map("inspectionmedia")
+}
+
+model UnitPrepTask {
+  id          Int           @id @default(autoincrement())
+  unitId      Int
+  bedroomId   Int?
+  ticketId    Int?
+  stage       PrepTaskStage @default(PENDING_TICKETS)
+  isRequired  Boolean       @default(true)
+  status      String        @default("PENDING")
+  title       String?
+  description String?       @db.Text
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  unit        Unit          @relation(fields: [unitId], references: [id])
+
+  @@map("unitpreptask")
+}
+
+model UnitHistory {
+  id        Int      @id @default(autoincrement())
+  unitId    Int
+  bedroomId Int?
+  userId    Int
+  action    String
+  oldStatus String?
+  newStatus String?
+  timestamp DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  unit      Unit     @relation(fields: [unitId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@map("unithistory")
+}
+
+enum MoveInStatus {
+  PENDING
+  BLOCKED_IN_CONSTRUCTION
+  BLOCKED_IN_PREPARATION
+  REQUIREMENTS_PENDING
+  READY_FOR_MOVE_IN
+  INSPECTION_COMPLETED
+  OCCUPIED
+  CANCELLED
+}
+
+enum MoveOutStatus {
+  PENDING
+  CONFIRMED
+  VISUAL_INSPECTION_SCHEDULED
+  FINAL_INSPECTION_SCHEDULED
+  INSPECTIONS_COMPLETED
+  COMPLETED
+  CANCELLED
+}
+
+enum InspectionType {
+  MOVE_IN
+  MOVE_OUT
+}
+
+enum InspectionStatus {
+  DRAFT
+  COMPLETED
+  CANCELLED
+}
+
+enum PrepTaskStage {
+  PENDING_TICKETS
+  READY_FOR_CLEANING
+  CLEANING_IN_PROGRESS
+  CLEANING_COMPLETED
+  UNIT_READY
 }
