@@ -1,5 +1,6 @@
 const prisma = require('../../config/prisma');
 const workflowService = require('../../services/workflow.service');
+const { generateDashboardPDF } = require('../../utils/pdf.utils');
 
 /**
  * Workflow Controller
@@ -354,7 +355,39 @@ const cancelMoveOut = async (req, res) => {
     }
 };
 
+const exportMoveInPDF = async (req, res) => {
+    try {
+        const moveIns = await prisma.moveIn.findMany({
+            include: {
+                unit: true,
+                lease: { include: { tenant: true } }
+            },
+            orderBy: { targetDate: 'asc' }
+        });
+        generateDashboardPDF('Move-In Dashboard Report', moveIns, res);
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const exportMoveOutPDF = async (req, res) => {
+    try {
+        const moveOuts = await prisma.moveOut.findMany({
+            include: {
+                unit: true,
+                lease: { include: { tenant: true } }
+            },
+            orderBy: { targetDate: 'asc' }
+        });
+        generateDashboardPDF('Move-Out Dashboard Report', moveOuts, res);
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
+    exportMoveInPDF,
+    exportMoveOutPDF,
     getMoveOutDashboard,
     getMoveInDashboard,
     approveMoveOut,

@@ -1,4 +1,5 @@
 const PDFDocument = require('pdfkit');
+const axios = require('axios');
 
 /**
  * Generates an Invoice PDF
@@ -229,29 +230,66 @@ const generateLeasePDF = (lease, res) => {
  * @param {string} reportId - ID of report (placeholder logic)
  * @param {Object} res - Express response object
  */
-const generateReportPDF = (reportId, res) => {
-    const doc = new PDFDocument({ margin: 50 });
+/**
+ * Generates a Dashboard Summary PDF (Move-In/Move-Out)
+ * @param {string} title - Report Title
+ * @param {Array} data - Array of items to list
+ * @param {Object} res - Express response object
+ */
+const generateDashboardPDF = (title, data, res) => {
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=report-${reportId}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename=report-${Date.now()}.pdf`);
 
     doc.pipe(res);
 
-    doc.fontSize(25).text('DATA EXPORT REPORT', { align: 'center' });
-    doc.moveDown();
+    const colors = {
+        primary: '#4f46e5',
+        secondary: '#64748b',
+        text: '#1e293b',
+        border: '#e2e8f0',
+        headerBg: '#f8fafc'
+    };
 
-    doc.fontSize(12).text(`Report Type: ${reportId}`);
-    doc.text(`Generated On: ${new Date().toLocaleString()}`);
-    doc.moveDown();
+    // Header
+    doc.fontSize(20).fillColor(colors.primary).font('Helvetica-Bold').text(title.toUpperCase(), { align: 'center' });
+    doc.fontSize(10).fillColor(colors.secondary).font('Helvetica').text(`Generated on: ${new Date().toLocaleString()}`, { align: 'center' });
+    doc.moveDown(2);
 
-    doc.text('This PDF contains a summary of the requested data export from PropManage SaaS.');
-    doc.moveDown();
+    // Table Header
+    const tableTop = doc.y;
+    doc.rect(40, tableTop, 515, 20).fill(colors.headerBg);
+    doc.fillColor(colors.secondary).font('Helvetica-Bold').fontSize(9);
+    
+    doc.text('UNIT', 50, tableTop + 6);
+    doc.text('TENANT', 120, tableTop + 6);
+    doc.text('STATUS', 280, tableTop + 6);
+    doc.text('DATE', 450, tableTop + 6);
 
-    doc.text('Summary Data Placeholder:', { underline: true });
-    doc.fontSize(10).text('Monthly Revenue: $120,500.00');
-    doc.text('Occupancy Rate: 94%');
-    doc.text('Active Leases: 42');
-    doc.moveDown();
+    let currentY = tableTop + 25;
+    doc.font('Helvetica').fontSize(9).fillColor(colors.text);
+
+    data.forEach((item, index) => {
+        // Simple page break check
+        if (currentY > 750) {
+            doc.addPage();
+            currentY = 50;
+        }
+
+        const unitName = item.unit?.name || item.unit?.unitNumber || 'N/A';
+        const tenantName = item.lease?.tenant?.name || 'N/A';
+        const status = item.status || 'N/A';
+        const date = item.lease?.startDate || item.lease?.endDate || item.createdAt;
+
+        doc.text(unitName, 50, currentY);
+        doc.text(tenantName, 120, currentY, { width: 150 });
+        doc.text(status, 280, currentY);
+        doc.text(new Date(date).toLocaleDateString(), 450, currentY);
+
+        currentY += 20;
+        doc.moveTo(40, currentY - 5).lineTo(555, currentY - 5).strokeColor(colors.border).lineWidth(0.5).stroke();
+    });
 
     doc.end();
 };
@@ -261,7 +299,7 @@ const generateReportPDF = (reportId, res) => {
  * @param {Object} inspection - Inspection object from DB
  * @param {Object} res - Express response object
  */
-const generateInspectionPDF = (inspection, res) => {
+const generateInspectionPDF = async (inspection, res) => {
     const doc = new PDFDocument({
         margin: 50,
         size: 'A4',
@@ -315,25 +353,72 @@ const generateInspectionPDF = (inspection, res) => {
     doc.moveDown();
 
     if (inspection.responses && inspection.responses.length > 0) {
-        inspection.responses.forEach((resp, index) => {
-            doc.fillColor(colors.text).font('Helvetica-Bold').fontSize(11).text(`${index + 1}. ${resp.questionText || 'Question'}`);
-            doc.font('Helvetica').fontSize(10).text(`Response: ${resp.value || 'N/A'}`, { indent: 20 });
+        for (const [index, resp] of inspection.responses.entries()) {
+            // Check for page break (approximate space needed for text + image)
+            if (doc.y > 650) doc.addPage();
+
+            doc.fillColor(colors.text).font('Helvetica-Bold').fontSize(11).text(`${index + 1}. ${resp.question || 'Observation'}`);
+            doc.font('Helvetica').fontSize(10).text(`Response: ${resp.response || 'N/A'}`, { indent: 20 });
+            
             if (resp.notes) {
-                doc.fillColor(colors.secondary).text(`Notes: ${resp.notes}`, { indent: 20 });
+                doc.fillColor(colors.secondary).font('Helvetica-Oblique').fontSize(9).text(`Notes: ${resp.notes}`, { indent: 20 });
             }
-            doc.moveDown();
-        });
+
+            if (resp.photoUrl) {
+                try {
+                    const response = await axios.get(resp.photoUrl, { responseType: 'arraybuffer' });
+                    const buffer = Buffer.from(response.data, 'binary');
+                    
+                    doc.moveDown(1);
+                    const imageWidth = 300;
+                    const xPos = (doc.page.width - imageWidth) / 2;
+                    
+                    // Get image height to update doc.y correctly
+                    const img = doc.openImage(buffer);
+                    const scaledHeight = img.height * (imageWidth / img.width);
+                    
+                    // Check if image fits on current page
+                    if (doc.y + scaledHeight > 750) {
+                        doc.addPage();
+                    }
+
+                    doc.image(buffer, xPos, doc.y, { width: imageWidth });
+                    doc.y += scaledHeight + 15; // Move Y down by image height plus margin
+                } catch (err) {
+                    console.error('Failed to fetch photo for PDF:', resp.photoUrl);
+                    doc.moveDown(1);
+                }
+            }
+
+            doc.moveDown(1);
+            doc.moveTo(50, doc.y).lineTo(550, doc.y).strokeColor(colors.border).lineWidth(0.5).stroke();
+            doc.moveDown(1.5);
+        }
     } else {
         doc.text('No responses recorded.');
     }
 
     // Signature
     if (inspection.tenantSignature) {
+        if (doc.y > 600) doc.addPage();
+        
         doc.moveDown(2);
         doc.fontSize(10).fillColor(colors.secondary).font('Helvetica-Bold').text('SIGNATURES');
         doc.moveTo(50, doc.y + 5).lineTo(550, doc.y + 5).strokeColor(colors.border).stroke();
-        doc.moveDown();
-        doc.fillColor(colors.text).font('Helvetica').text(`Tenant Signature: ${inspection.tenantSignature}`);
+        doc.moveDown(1.5);
+        
+        doc.fillColor(colors.text).font('Helvetica-Bold').text('Tenant Signature:', { align: 'center' });
+        doc.moveDown(1);
+        try {
+            const sigWidth = 200;
+            const xPos = (doc.page.width - sigWidth) / 2;
+            
+            // For signatures (usually small), we can estimate or just use fixed height
+            doc.image(inspection.tenantSignature, xPos, doc.y, { width: sigWidth });
+            doc.y += 80; // Estimated height for signature
+        } catch (e) {
+            doc.fontSize(8).fillColor('red').text('Error rendering signature image.', { align: 'center' });
+        }
     }
 
     doc.end();
@@ -343,6 +428,6 @@ module.exports = {
     generateInvoicePDF,
     generateReceiptPDF,
     generateLeasePDF,
-    generateReportPDF,
+    generateDashboardPDF,
     generateInspectionPDF
 };

@@ -5,8 +5,10 @@ const inspectionController = require('./inspection.controller');
 const { authorize } = require('../../middlewares/auth.middleware');
 
 // Move-In / Move-Out Dashboard Routes
-router.get('/move-out', workflowController.getMoveOutDashboard);
 router.get('/move-in', workflowController.getMoveInDashboard);
+router.get('/move-in/export', workflowController.exportMoveInPDF);
+router.get('/move-out', workflowController.getMoveOutDashboard);
+router.get('/move-out/export', workflowController.exportMoveOutPDF);
 router.post('/move-out/:id/approve', authorize('ADMIN', 'OWNER'), workflowController.approveMoveOut);
 router.put('/move-out/:id/confirm', authorize('ADMIN', 'OWNER'), workflowController.confirmMoveOut);
 router.put('/move-out/:id/complete', authorize('ADMIN', 'OWNER'), workflowController.completeMoveOut);
@@ -27,6 +29,7 @@ router.get('/inspections/:id/download', inspectionController.downloadInspectionP
 router.post('/inspections/:id/submit', inspectionController.submitInspection);
 router.post('/inspections/:id/tickets', inspectionController.createTicket);
 router.put('/inspections/:id', inspectionController.updateInspection);
+router.delete('/inspections/:id', authorize('ADMIN'), inspectionController.deleteInspection);
 
 // Unit History
 router.get('/units/:unitId/history', workflowController.getUnitHistory);

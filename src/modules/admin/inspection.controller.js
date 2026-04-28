@@ -181,7 +181,7 @@ const updateInspection = async (req, res) => {
 
         if (!existing) return res.status(404).json({ success: false, message: 'Inspection not found' });
 
-        const updates = [];
+        const updates = {};
         const auditLogs = [];
 
         // Track changes for Audit Log
@@ -270,7 +270,7 @@ const downloadInspectionPDF = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Inspection not found' });
         }
 
-        generateInspectionPDF(inspection, res);
+        await generateInspectionPDF(inspection, res);
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -377,7 +377,25 @@ const createTicket = async (req, res) => {
     }
 };
 
+const deleteInspection = async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        await prisma.$transaction(async (tx) => {
+            // Delete responses
+            await tx.inspectionItemResponse.deleteMany({ where: { inspectionId: parseInt(id) } });
+            // Delete inspection
+            await tx.inspection.delete({ where: { id: parseInt(id) } });
+        });
+
+        res.json({ success: true, message: 'Inspection deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
+    deleteInspection,
     createTemplate,
     getTemplates,
     createInspection,
