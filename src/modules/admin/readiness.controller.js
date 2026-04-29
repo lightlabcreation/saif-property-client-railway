@@ -56,8 +56,14 @@ exports.getReadinessStats = async (req, res) => {
         if (propertyId) where.AND.push({ propertyId: parseInt(propertyId) });
         
         // Match dashboard logic: Filter by lease history
+        // Rule 1.5: Include units that are leased but not yet physically ready in the stats
         if (!isShowLeased) {
-            where.AND.push({ leases: { none: {} } });
+            where.AND.push({ 
+                OR: [
+                    { leases: { none: {} } },
+                    { unit_ready_completed: false }
+                ]
+            });
         }
 
         const units = await prisma.unit.findMany({ 
@@ -115,10 +121,14 @@ exports.getReadinessDashboard = async (req, res) => {
             where.AND.push({ propertyId: parseInt(propertyId) });
         }
 
-        // 2. Filter for New Construction only (Rule: Hide permanently once a lease exists)
+        // Rule 1.5 & 1.6: Keep units in readiness flow if they are NOT physically ready, even if a lease exists.
+        // Hide only units that are BOTH Leased AND Ready.
         if (!isShowLeased) {
-            where.AND.push({ 
-                leases: { none: {} }  // Show only units that have never had any lease record
+            where.AND.push({
+                OR: [
+                    { leases: { none: {} } },
+                    { unit_ready_completed: false }
+                ]
             });
         }
 
@@ -248,12 +258,24 @@ exports.getReadinessDashboard = async (req, res) => {
             }
 
             const isReserved = u.is_reserved || u.reserved_flag || u.bedroomsList.some(b => b.reserved_flag);
+            const hasActiveLease = u.leases.length > 0;
 
-            if (isReserved) {
+            // MODULE 1, RULE 1.5 & 1.6: Blocked Status Logic
+            if (hasActiveLease && !isFullyReady) {
+                if (u.classification === 'New Construction' || u.unit_type === 'NEW_CONSTRUCTION') {
+                    dynamicStage = 'Blocked – In Construction';
+                } else {
+                    dynamicStage = 'Blocked – In Preparation';
+                }
+            } else if (isReserved) {
                 dynamicStage = isFullyReady ? 'Reserved – Ready' : (pendingStep ? `Reserved – Not Ready (${pendingStep.label})` : 'Reserved – Not Ready');
             } else if (isFullyReady) {
                 dynamicStage = 'Unit Ready';
             }
+
+            // MODULE 1, RULE 1.7: Priority Logic
+            // If lease exists AND unit is not ready -> Mark as Priority
+            const isPriority = hasActiveLease && !isFullyReady;
 
             return {
                 id: u.id,
@@ -268,6 +290,8 @@ exports.getReadinessDashboard = async (req, res) => {
                 marketAge,
                 marketAgeLabel,
                 reserved: isReserved,
+                isPriority,
+                hasActiveLease,
                 isActive: u.ready_for_leasing,
                 reservedBy: u.reserved_by_user?.name || u.status_note || u.bedroomsList.find(b => b.reserved_flag)?.reserved_by_user?.name || null,
                 moveInDate: u.tentative_move_in_date || u.bedroomsList.find(b => b.reserved_flag)?.tentative_move_in_date,
