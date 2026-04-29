@@ -185,7 +185,7 @@ exports.getAllUnits = async (req, res) => {
 exports.createUnit = async (req, res) => {
     try {
         console.log('CREATE UNIT REQUEST:', req.body);
-        const { unit: unitName, propertyId, rentalMode, unitNumber, unitType, floor, bedrooms: bedroomCount, bedroomIdentifiers } = req.body;
+        const { unit: unitName, propertyId, rentalMode, unitNumber, unitType, floor, bedrooms: bedroomCount, bedroomIdentifiers, classification } = req.body;
         if (!propertyId) return res.status(400).json({ message: 'Property (Building) is required' });
         
         const finalPropertyId = parseInt(propertyId);
