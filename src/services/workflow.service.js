@@ -434,22 +434,17 @@ const createTicketsFromInspection = async (inspectionId, userId) => {
  */
 const checkAndProgressUnitPrep = async (unitId) => {
     return await prisma.$transaction(async (tx) => {
-        // Find all required tasks for this unit
-        const requiredTasks = await tx.unitPrepTask.findMany({
+        // Find if there are any OPEN required tickets for this unit
+        const openRequiredTicketsCount = await tx.ticket.count({
             where: { 
                 unitId,
-                isRequired: true
-            },
-            include: { ticket: true }
+                isRequired: true,
+                status: { notIn: ['Closed', 'Completed', 'Resolved'] }
+            }
         });
 
-        // Check if any required ticket is still open
-        const hasOpenRequired = requiredTasks.some(task => 
-            task.ticket && !['Closed', 'Completed', 'Resolved'].includes(task.ticket.status)
-        );
-
         // Module 3, Rule 8: Cleaning starts ONLY AFTER required tickets done
-        if (!hasOpenRequired && requiredTasks.length > 0) {
+        if (openRequiredTicketsCount === 0) {
             const unit = await tx.unit.findUnique({ where: { id: unitId } });
             
             // Only progress if we are in PENDING_TICKETS stage

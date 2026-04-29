@@ -213,51 +213,45 @@ const getUnitPrepDashboard = async (req, res) => {
         // Fetch units that are in preparation (usually marked as Vacant after move-out or newly construction)
         const units = await prisma.unit.findMany({
             where: {
-                // We show units that are in any prep stage
-                current_stage: {
-                    in: ['PENDING_TICKETS', 'READY_FOR_CLEANING', 'CLEANING_IN_PROGRESS', 'CLEANING_COMPLETED']
-                }
+                OR: [
+                    {
+                        current_stage: {
+                            in: ['PENDING_TICKETS', 'READY_FOR_CLEANING', 'CLEANING_IN_PROGRESS', 'CLEANING_COMPLETED', 'UNIT_READY']
+                        }
+                    },
+                    {
+                        Ticket: {
+                            some: {
+                                status: 'Open',
+                                isRequired: true
+                            }
+                        }
+                    }
+                ]
             },
             include: {
                 property: true,
-                prepTasks: {
-                    include: {
-                        // Include the ticket if it's a deficiency task
-                        // Wait, ticket is not a relation in schema but a ticketId field?
-                        // Let me check schema again.
-                    }
-                },
                 leases: {
                     where: { status: 'Active' },
                     include: { tenant: true }
                 },
-                // Also find the next reservation if any
                 reserved_by_user: true
             }
         });
 
         // For each unit, check if it's blocked by required tickets
         const dashboardData = await Promise.all(units.map(async (unit) => {
-            // Get all open tickets for this unit
             const openTickets = await prisma.ticket.findMany({
-                where: {
-                    unitId: unit.id,
-                    status: 'Open'
-                }
+                where: { unitId: unit.id, status: 'Open' }
             });
 
             const requiredTickets = openTickets.filter(t => t.isRequired);
             const hasRequiredTickets = requiredTickets.length > 0;
 
-            // Determine if unit should auto-progress from PENDING_TICKETS to READY_FOR_CLEANING
             let effectiveStage = unit.current_stage;
+            // If it's in PENDING_TICKETS but has no required repairs, it's effectively READY_FOR_CLEANING
             if (effectiveStage === 'PENDING_TICKETS' && !hasRequiredTickets) {
-                // Auto-progress
                 effectiveStage = 'READY_FOR_CLEANING';
-                await prisma.unit.update({
-                    where: { id: unit.id },
-                    data: { current_stage: 'READY_FOR_CLEANING' }
-                });
             }
 
             return {
@@ -269,8 +263,19 @@ const getUnitPrepDashboard = async (req, res) => {
             };
         }));
 
-        res.json({ success: true, data: dashboardData });
+        // Dynamic Stats Calculation
+        const stats = {
+            upcomingMoveOuts: await prisma.moveOut.count({ where: { status: 'PENDING' } }),
+            confirmedMoveOuts: await prisma.moveOut.count({ where: { status: 'CONFIRMED' } }),
+            inspectionsScheduled: await prisma.inspection.count({ where: { status: 'DRAFT' } }),
+            inRepair: dashboardData.filter(d => d.hasRequiredTickets).length,
+            readyForCompletion: dashboardData.filter(d => d.current_stage === 'CLEANING_COMPLETED').length,
+            unitsReady: dashboardData.filter(d => d.current_stage === 'UNIT_READY').length
+        };
+
+        res.json({ success: true, data: dashboardData, stats });
     } catch (error) {
+        console.error('UNIT_PREP_ERROR:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -443,21 +448,66 @@ const toggleMoveInRequirement = async (req, res) => {
     }
 };
 
+const getInspectionUnits = async (req, res) => {
+    try {
+        const units = await prisma.unit.findMany({
+            where: {
+                propertyId: req.query.propertyId ? parseInt(req.query.propertyId) : undefined,
+            },
+            include: {
+                leases: {
+                    where: { status: 'Active' },
+                    include: { tenant: true },
+                    take: 1
+                },
+                reserved_by_user: true,
+                property: true
+            },
+            orderBy: { name: 'asc' }
+        });
+
+        const data = units.map(u => {
+            const activeLease = u.leases[0];
+            return {
+                id: u.id,
+                unitId: u.id,
+                unitNumber: u.name || u.unitNumber,
+                leaseId: activeLease?.id || null,
+                tenantName: activeLease?.tenant?.name || u.reserved_by_user?.name || 'Vacant / Prospect',
+                unit: {
+                    unitNumber: u.name || u.unitNumber,
+                    propertyId: u.propertyId,
+                    property: u.property
+                },
+                lease: activeLease ? {
+                    id: activeLease.id,
+                    tenant: activeLease.tenant
+                } : null
+            };
+        });
+
+        res.json({ success: true, data });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
+    getInspectionUnits,
+    getMoveOutDashboard,
+    getMoveInDashboard,
     exportMoveInPDF,
     exportMoveOutPDF,
     exportUnitPrepPDF,
-    getMoveOutDashboard,
-    getMoveInDashboard,
     approveMoveOut,
-    overrideMoveIn,
-    approveMoveIn,
-    getUnitHistory,
-    triggerMoveOut,
     confirmMoveOut,
     completeMoveOut,
+    triggerMoveOut,
     cancelMoveOut,
+    overrideMoveIn,
+    approveMoveIn,
+    toggleMoveInRequirement,
     getUnitPrepDashboard,
     updateUnitPrepStage,
-    toggleMoveInRequirement
+    getUnitHistory
 };
