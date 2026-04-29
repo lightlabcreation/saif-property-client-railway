@@ -15,12 +15,16 @@ router.put('/move-out/:id/complete', authorize('ADMIN', 'OWNER'), workflowContro
 router.post('/move-in/:id/override', authorize('ADMIN', 'OWNER'), workflowController.overrideMoveIn);
 router.post('/move-in/:id/approve', authorize('ADMIN', 'OWNER'), workflowController.approveMoveIn);
 router.get('/unit-prep', authorize('ADMIN', 'OWNER'), workflowController.getUnitPrepDashboard);
+router.get('/unit-prep/export', authorize('ADMIN', 'OWNER'), workflowController.exportUnitPrepPDF);
 router.put('/unit-prep/:unitId/stage', authorize('ADMIN', 'OWNER'), workflowController.updateUnitPrepStage);
 router.post('/move-out/trigger/:leaseId', workflowController.triggerMoveOut);
 router.put('/move-out/cancel/:leaseId', authorize('ADMIN', 'OWNER'), workflowController.cancelMoveOut);
 
 // Inspection Routes
-router.post('/templates', authorize('ADMIN'), inspectionController.createTemplate);
+router.post('/templates', inspectionController.createTemplate);
+router.post('/templates/:id/duplicate', inspectionController.duplicateTemplate);
+router.put('/templates/:id', inspectionController.updateTemplate);
+router.delete('/templates/:id', inspectionController.deleteTemplate);
 router.get('/templates', inspectionController.getTemplates);
 router.post('/inspections', inspectionController.createInspection);
 router.get('/inspections', inspectionController.getAllInspections);

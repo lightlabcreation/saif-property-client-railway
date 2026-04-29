@@ -385,9 +385,44 @@ const exportMoveOutPDF = async (req, res) => {
     }
 };
 
+const exportUnitPrepPDF = async (req, res) => {
+    try {
+        const units = await prisma.unit.findMany({
+            where: {
+                current_stage: {
+                    in: ['PENDING_TICKETS', 'READY_FOR_CLEANING', 'CLEANING_IN_PROGRESS', 'CLEANING_COMPLETED', 'UNIT_READY']
+                }
+            },
+            include: { 
+                property: true,
+                leases: {
+                    where: { status: 'Active' },
+                    include: { tenant: true }
+                }
+            }
+        });
+        
+        const dataForPDF = units.map(u => ({
+            unit: { name: u.unitNumber },
+            lease: {
+                tenant: {
+                    name: u.leases?.[0]?.tenant?.name || 'Vacant'
+                }
+            },
+            status: u.current_stage,
+            createdAt: new Date()
+        }));
+
+        generateDashboardPDF('Unit Preparation Report', dataForPDF, res);
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
     exportMoveInPDF,
     exportMoveOutPDF,
+    exportUnitPrepPDF,
     getMoveOutDashboard,
     getMoveInDashboard,
     approveMoveOut,

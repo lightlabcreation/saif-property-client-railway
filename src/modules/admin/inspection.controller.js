@@ -404,5 +404,52 @@ module.exports = {
     createTicket,
     updateInspection,
     getAllInspections,
-    downloadInspectionPDF
+    downloadInspectionPDF,
+    deleteTemplate,
+    duplicateTemplate,
+    updateTemplate
 };
+
+async function updateTemplate(req, res) {
+    try {
+        const { id } = req.params;
+        const { name, type, structure } = req.body;
+        const updated = await prisma.inspectionTemplate.update({
+            where: { id: parseInt(id) },
+            data: { name, type, structure }
+        });
+        res.json({ success: true, data: updated });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+}
+
+async function deleteTemplate(req, res) {
+    try {
+        const { id } = req.params;
+        await prisma.inspectionTemplate.delete({ where: { id: parseInt(id) } });
+        res.json({ success: true, message: 'Template deleted' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+}
+
+async function duplicateTemplate(req, res) {
+    try {
+        const { id } = req.params;
+        const original = await prisma.inspectionTemplate.findUnique({ where: { id: parseInt(id) } });
+        if (!original) return res.status(404).json({ success: false, message: 'Not found' });
+
+        const clone = await prisma.inspectionTemplate.create({
+            data: {
+                name: `${original.name} (Copy)`,
+                type: original.type,
+                description: original.description,
+                structure: original.structure
+            }
+        });
+        res.json({ success: true, data: clone });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+}
