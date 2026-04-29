@@ -14,6 +14,7 @@ router.put('/move-out/:id/confirm', authorize('ADMIN', 'OWNER'), workflowControl
 router.put('/move-out/:id/complete', authorize('ADMIN', 'OWNER'), workflowController.completeMoveOut);
 router.post('/move-in/:id/override', authorize('ADMIN', 'OWNER'), workflowController.overrideMoveIn);
 router.post('/move-in/:id/approve', authorize('ADMIN', 'OWNER'), workflowController.approveMoveIn);
+router.put('/move-in/:moveInId/requirement', authorize('ADMIN', 'OWNER'), workflowController.toggleMoveInRequirement);
 router.get('/unit-prep', authorize('ADMIN', 'OWNER'), workflowController.getUnitPrepDashboard);
 router.get('/unit-prep/export', authorize('ADMIN', 'OWNER'), workflowController.exportUnitPrepPDF);
 router.put('/unit-prep/:unitId/stage', authorize('ADMIN', 'OWNER'), workflowController.updateUnitPrepStage);

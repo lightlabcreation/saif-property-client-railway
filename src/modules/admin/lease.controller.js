@@ -270,12 +270,12 @@ exports.updateLease = catchAsync(async (req, res, next) => {
             if (isNaN(rentAmt) || rentAmt < 0) throw new AppError('Invalid rent amount', 400);
             leaseUpdateData.monthlyRent = rentAmt;
         }
-        if (startDate) leaseUpdateData.startDate = new Date(startDate);
+        if (startDate) leaseUpdateData.startDate = workflowService.normalizeToNoon(startDate);
 
         let shouldExpire = false;
         let shouldReactivate = false;
         if (endDate) {
-            const newEndDate = new Date(endDate);
+            const newEndDate = workflowService.normalizeToNoon(endDate);
             leaseUpdateData.endDate = newEndDate;
 
             const timeZone = process.env.TZ || 'Asia/Kolkata';
@@ -855,8 +855,8 @@ exports.createLease = catchAsync(async (req, res, next) => {
         const leaseEnd = new Date(leaseEndRaw.getUTCFullYear(), leaseEndRaw.getUTCMonth(), leaseEndRaw.getUTCDate());
 
         const leaseData = {
-            startDate: new Date(startDate),
-            endDate: leaseEndRaw, // Keep the UTC raw for DB
+            startDate: workflowService.normalizeToNoon(startDate),
+            endDate: workflowService.normalizeToNoon(endDate), 
             monthlyRent: parseFloat(monthlyRent) || 0,
             securityDeposit: parseFloat(securityDeposit) || 0,
             status: leaseEnd < today ? 'Expired' : 'Active',

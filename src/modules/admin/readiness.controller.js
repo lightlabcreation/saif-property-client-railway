@@ -61,7 +61,8 @@ exports.getReadinessStats = async (req, res) => {
             where.AND.push({ 
                 OR: [
                     { leases: { none: {} } },
-                    { unit_ready_completed: false }
+                    { unit_ready_completed: false },
+                    { ready_for_leasing: false }
                 ]
             });
         }
@@ -127,7 +128,8 @@ exports.getReadinessDashboard = async (req, res) => {
             where.AND.push({
                 OR: [
                     { leases: { none: {} } },
-                    { unit_ready_completed: false }
+                    { unit_ready_completed: false },
+                    { ready_for_leasing: false }
                 ]
             });
         }
@@ -438,6 +440,8 @@ exports.updateReadinessStep = async (req, res) => {
         if (isPhysicallyReady && isManuallyApproved) {
             updateData.unit_status = 'ACTIVE';
             updateData.availability_status = unit.reserved_flag ? 'Reserved' : 'Available';
+            updateData.classification = 'Completed';
+            updateData.unit_type = 'COMPLETED';
         }
 
         // Update Unit
@@ -603,7 +607,9 @@ exports.activateUnit = async (req, res) => {
         const updateData = {
             ready_for_leasing: ready,
             unit_status: ready ? 'ACTIVE' : 'INACTIVE',
-            availability_status: ready ? 'Available' : 'Unavailable'
+            availability_status: ready ? 'Available' : 'Unavailable',
+            classification: ready ? 'Completed' : undefined,
+            unit_type: ready ? 'COMPLETED' : undefined
         };
         const updated = await prisma.unit.update({
             where: { id: parseInt(unitId) },

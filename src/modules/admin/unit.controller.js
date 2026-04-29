@@ -248,11 +248,11 @@ exports.createUnit = async (req, res) => {
                 bedrooms: numBedrooms,
                 rentAmount: 0,
                 // readiness fields
-                gc_delivered_target_date: req.body.gc_delivered_target_date ? new Date(req.body.gc_delivered_target_date) : null,
+                gc_delivered_target_date: req.body.gc_delivered_target_date ? workflowService.normalizeToNoon(req.body.gc_delivered_target_date) : null,
                 reserved_flag: req.body.reserved_flag || false,
                 reserved_by_id: resUserId,
                 reservation_date: req.body.reserved_flag ? new Date() : null,
-                tentative_move_in_date: req.body.tentative_move_in_date ? new Date(req.body.tentative_move_in_date) : null,
+                tentative_move_in_date: req.body.tentative_move_in_date ? workflowService.normalizeToNoon(req.body.tentative_move_in_date) : null,
                 ...(req.body.gc_delivered_target_date ? await recalculateTimelineHelper(req.body.gc_delivered_target_date) : {})
             },
             include: { property: true }
@@ -269,6 +269,13 @@ exports.createUnit = async (req, res) => {
                 rentAmount: 0
             }));
             await prisma.bedroom.createMany({ data: bedroomsToCreate });
+        }
+
+        // --- NEW: Sync Move-In Dashboard ---
+        if (newUnit.reserved_flag || newUnit.unit_status === 'ACTIVE') {
+            await workflowService.syncMoveInStatus(newUnit.id, {
+                targetDate: newUnit.tentative_move_in_date
+            });
         }
 
         res.status(201).json(newUnit);
@@ -417,11 +424,11 @@ exports.updateUnit = async (req, res) => {
                 rentalMode,
                 status,
                 property: propertyId ? { connect: { id: parseInt(propertyId) } } : undefined,
-                gc_delivered_target_date: req.body.gc_delivered_target_date ? new Date(req.body.gc_delivered_target_date) : undefined,
+                gc_delivered_target_date: req.body.gc_delivered_target_date ? workflowService.normalizeToNoon(req.body.gc_delivered_target_date) : undefined,
                 reserved_flag: req.body.reserved_flag !== undefined ? req.body.reserved_flag : undefined,
                 reserved_by_user: resUserId !== undefined ? (resUserId ? { connect: { id: resUserId } } : { disconnect: true }) : undefined,
                 reservation_date: req.body.reservation_date ? new Date(req.body.reservation_date) : undefined,
-                tentative_move_in_date: req.body.tentative_move_in_date ? new Date(req.body.tentative_move_in_date) : undefined,
+                tentative_move_in_date: req.body.tentative_move_in_date ? workflowService.normalizeToNoon(req.body.tentative_move_in_date) : undefined,
                 unit_status: req.body.unit_status,
                 availability_status: req.body.availability_status,
                 ...(req.body.gc_delivered_target_date ? await recalculateTimelineHelper(req.body.gc_delivered_target_date) : {})

@@ -45,7 +45,11 @@ const getMoveInDashboard = async (req, res) => {
                     include: { 
                         tenant: true,
                         insurances: { orderBy: { createdAt: 'desc' }, take: 1 },
-                        invoices: { where: { category: 'SECURITY_DEPOSIT' } }
+                        invoices: { 
+                            where: { 
+                                category: { in: ['SECURITY_DEPOSIT', 'RENT'] } 
+                            } 
+                        } 
                     } 
                 },
                 overrideUser: { select: { id: true, name: true } }
@@ -59,9 +63,17 @@ const getMoveInDashboard = async (req, res) => {
             const target = new Date(mi.targetDate);
             const diffDays = Math.ceil((target - today) / (1000 * 60 * 60 * 24));
             
-            // Layer 2 Checks (Only if lease exists)
-            const hasInsurance = mi.lease?.insurances?.some(i => i.status === 'ACTIVE') || false;
-            const depositPaid = mi.lease?.invoices?.every(inv => inv.status === 'paid') || false;
+            const dbInsurance = mi.lease?.insurances?.some(i => i.status === 'ACTIVE') || false;
+            const dbDeposit = mi.lease?.invoices?.filter(inv => inv.category === 'SECURITY_DEPOSIT').every(inv => inv.status === 'paid') && (mi.lease?.invoices?.some(inv => inv.category === 'SECURITY_DEPOSIT') || false);
+            const dbRent = mi.lease?.invoices?.filter(inv => inv.category === 'RENT').some(inv => inv.status === 'paid');
+            
+            // 2. Requirements from JSON field (Manual Overrides)
+            const missingItems = Array.isArray(mi.missingItems) ? mi.missingItems : ['Rent', 'Deposit', 'Insurance'];
+            
+            // 3. Final logic: True if manually checked OR if record exists in DB
+            const rentPaid = !missingItems.includes('Rent') || dbRent;
+            const depositPaid = !missingItems.includes('Deposit') || dbDeposit;
+            const insuranceProvided = !missingItems.includes('Insurance') || dbInsurance;
             
             let currentStatus = mi.status;
 
@@ -72,10 +84,10 @@ const getMoveInDashboard = async (req, res) => {
                 }
             }
 
-            // Transition: Missing Requirements -> Ready for Inspection
+            // Transition: Missing Requirements -> Ready for Move-In
             if (currentStatus === 'REQUIREMENTS_PENDING') {
-                const reqsMet = mi.lease?.rent_paid && mi.lease?.security_deposit_paid && mi.lease?.insurance_provided && mi.lease?.status === 'Active';
-                if (reqsMet || mi.admin_override) {
+                const reqsMet = rentPaid && depositPaid && insuranceProvided;
+                if (reqsMet || mi.overrideFlag) {
                     currentStatus = 'READY_FOR_MOVE_IN';
                 }
             }
@@ -86,8 +98,9 @@ const getMoveInDashboard = async (req, res) => {
                 daysRemaining: diffDays,
                 urgency: diffDays < 0 ? 'OVERDUE' : diffDays <= 7 ? 'HIGH' : 'NORMAL',
                 requirements: {
-                    insurance: hasInsurance,
-                    deposit: depositPaid
+                    rent: rentPaid,
+                    deposit: depositPaid,
+                    insurance: insuranceProvided
                 }
             };
         });
@@ -419,6 +432,17 @@ const exportUnitPrepPDF = async (req, res) => {
     }
 };
 
+const toggleMoveInRequirement = async (req, res) => {
+    try {
+        const { moveInId } = req.params;
+        const { requirement, completed } = req.body;
+        const result = await workflowService.updateMoveInRequirement(parseInt(moveInId), { requirement, completed });
+        res.json({ success: true, data: result });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
     exportMoveInPDF,
     exportMoveOutPDF,
@@ -434,5 +458,6 @@ module.exports = {
     completeMoveOut,
     cancelMoveOut,
     getUnitPrepDashboard,
-    updateUnitPrepStage
+    updateUnitPrepStage,
+    toggleMoveInRequirement
 };

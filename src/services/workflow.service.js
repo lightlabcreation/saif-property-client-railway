@@ -1,6 +1,18 @@
 const prisma = require('../config/prisma');
 
 /**
+ * Normalizes a date to 12:00 PM (Noon) UTC to prevent timezone shifting
+ */
+const normalizeToNoon = (date) => {
+    if (!date) return null;
+    const d = new Date(date);
+    d.setUTCHours(12, 0, 0, 0);
+    return d;
+};
+
+exports.normalizeToNoon = normalizeToNoon;
+
+/**
  * Workflow Service
  * Handles business logic for Move-In, Move-Out, and Unit Preparation
  * All critical operations use Prisma Transactions for data integrity.
@@ -323,10 +335,11 @@ const syncMoveInStatus = async (unitId, { leaseId, bedroomId, targetDate }, tx =
         return await pTx.moveIn.create({
             data: {
                 unitId,
-                leaseId,
+                leaseId: leaseId || null,
                 bedroomId,
                 status: initialStatus,
-                targetDate: targetDate || unit.tentative_move_in_date || new Date()
+                targetDate: normalizeToNoon(targetDate || unit.tentative_move_in_date || new Date()),
+                missingItems: ['Rent', 'Deposit', 'Insurance']
             }
         });
     };
@@ -465,6 +478,30 @@ const checkAndProgressUnitPrep = async (unitId) => {
         }
 
         return { autoProgressed: false };
+    });
+};
+
+const updateMoveInRequirement = async (moveInId, { requirement, completed }) => {
+    return await prisma.$transaction(async (tx) => {
+        const moveIn = await tx.moveIn.findUnique({ where: { id: moveInId } });
+        if (!moveIn) throw new Error('Move-In record not found');
+
+        let missingItems = Array.isArray(moveIn.missingItems) ? moveIn.missingItems : [];
+        
+        if (completed) {
+            // Remove from missing items
+            missingItems = missingItems.filter(item => item !== requirement);
+        } else {
+            // Add to missing items if not already there
+            if (!missingItems.includes(requirement)) {
+                missingItems.push(requirement);
+            }
+        }
+
+        return await tx.moveIn.update({
+            where: { id: moveInId },
+            data: { missingItems }
+        });
     });
 };
 
@@ -728,6 +765,7 @@ module.exports = {
     syncMoveInStatus,
     createTicketsFromInspection,
     checkAndProgressUnitPrep,
+    updateMoveInRequirement,
     completeMoveIn,
     completeMoveOutFlow,
     cancelMoveOutFlow
