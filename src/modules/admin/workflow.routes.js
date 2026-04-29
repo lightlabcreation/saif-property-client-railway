@@ -5,6 +5,7 @@ const inspectionController = require('./inspection.controller');
 const { authorize } = require('../../middlewares/auth.middleware');
 
 // Move-In / Move-Out Dashboard Routes
+router.get('/units', workflowController.getInspectionUnits);
 router.get('/move-in', workflowController.getMoveInDashboard);
 router.get('/move-in/export', workflowController.exportMoveInPDF);
 router.get('/move-out', workflowController.getMoveOutDashboard);
@@ -33,6 +34,7 @@ router.get('/inspections/:id', inspectionController.getInspectionDetails);
 router.get('/inspections/:id/download', inspectionController.downloadInspectionPDF);
 router.post('/inspections/:id/submit', inspectionController.submitInspection);
 router.post('/inspections/:id/tickets', inspectionController.createTicket);
+router.delete('/inspections/:id/tickets/:ticketId', inspectionController.deleteTicket);
 router.put('/inspections/:id', inspectionController.updateInspection);
 router.delete('/inspections/:id', authorize('ADMIN'), inspectionController.deleteInspection);
 

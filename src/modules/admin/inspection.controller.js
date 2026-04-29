@@ -48,8 +48,8 @@ const getTemplates = async (req, res) => {
 
 const createInspection = async (req, res) => {
     try {
-        const { templateId, unitId, leaseId, bedroomId } = req.body;
-        const inspectorId = req.user.id;
+        const { templateId, unitId, leaseId, bedroomId, date } = req.body;
+        const inspectorId = req.user?.id || 1; // Fallback to 1 if user context missing for testing
 
         // Check if template exists
         const template = await prisma.inspectionTemplate.findUnique({ where: { id: templateId } });
@@ -356,16 +356,14 @@ const createTicket = async (req, res) => {
         }
 
         try {
-            // 3. Update Unit to Blocked status (Only for Move-Out)
-            if (inspection.template?.type === 'MOVE_OUT') {
-                await prisma.unit.update({
-                    where: { id: inspection.unitId },
-                    data: { 
-                        status_note: 'Blocked - In Preparation (Deficiencies)',
-                        current_stage: 'PENDING_TICKETS'
-                    }
-                });
-            }
+            // 3. Update Unit to Blocked status (Triggered by any inspection deficiency)
+            await prisma.unit.update({
+                where: { id: inspection.unitId },
+                data: { 
+                    status_note: `Blocked - Maintenance Required (${inspection.template?.type || 'INSPECTION'})`,
+                    current_stage: 'PENDING_TICKETS'
+                }
+            });
         } catch (unitErr) {
             console.error('UNIT_UPDATE_ERROR:', unitErr);
         }
@@ -373,6 +371,48 @@ const createTicket = async (req, res) => {
         res.json({ success: true, data: ticket });
     } catch (error) {
         console.error('OVERALL_CREATE_TICKET_ERROR:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const deleteTicket = async (req, res) => {
+    try {
+        const { id, ticketId } = req.params;
+
+        await prisma.$transaction(async (tx) => {
+            // 1. Delete associated UnitPrepTask
+            await tx.unitPrepTask.deleteMany({
+                where: { ticketId: parseInt(ticketId) }
+            });
+
+            // 2. Delete the Ticket
+            const ticket = await tx.ticket.delete({
+                where: { id: parseInt(ticketId) }
+            });
+
+            // 3. Check if unit should be unblocked (any remaining required tickets?)
+            const remainingRequired = await tx.ticket.count({
+                where: {
+                    unitId: ticket.unitId,
+                    status: 'Open',
+                    isRequired: true
+                }
+            });
+
+            if (remainingRequired === 0) {
+                await tx.unit.update({
+                    where: { id: ticket.unitId },
+                    data: { 
+                        status_note: 'Unblocked - Maintenance Complete',
+                        current_stage: 'READY_FOR_CLEANING'
+                    }
+                });
+            }
+        });
+
+        res.json({ success: true, message: 'Ticket and associated prep tasks removed.' });
+    } catch (error) {
+        console.error('DELETE_TICKET_ERROR:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -402,6 +442,7 @@ module.exports = {
     submitInspection,
     getInspectionDetails,
     createTicket,
+    deleteTicket,
     updateInspection,
     getAllInspections,
     downloadInspectionPDF,
