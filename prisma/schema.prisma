@@ -927,11 +927,11 @@ model InspectionTemplate {
 
 model Inspection {
   id                    Int              @id @default(autoincrement())
-  templateId            Int
+  templateId            Int?
   unitId                Int
   bedroomId             Int?
   leaseId               Int?
-  inspectorId           Int
+  inspectorId           Int?
   tenantSignature       String?          @db.Text
   noDeficiencyConfirmed Boolean          @default(false)
   status                InspectionStatus @default(DRAFT)
@@ -939,10 +939,10 @@ model Inspection {
   createdAt             DateTime         @default(now())
   updatedAt             DateTime         @updatedAt
 
-  template  InspectionTemplate       @relation(fields: [templateId], references: [id])
+  template  InspectionTemplate?      @relation(fields: [templateId], references: [id])
   unit      Unit                     @relation(fields: [unitId], references: [id])
   lease     Lease?                   @relation(fields: [leaseId], references: [id])
-  inspector User                     @relation("Inspector", fields: [inspectorId], references: [id])
+  inspector User?                    @relation("Inspector", fields: [inspectorId], references: [id])
   responses InspectionItemResponse[]
   tickets   Ticket[]
 
@@ -1007,7 +1007,7 @@ model UnitHistory {
   newStatus String?
   timestamp DateTime @default(now())
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime? @updatedAt
 
   unit Unit @relation(fields: [unitId], references: [id])
   user User @relation(fields: [userId], references: [id])
