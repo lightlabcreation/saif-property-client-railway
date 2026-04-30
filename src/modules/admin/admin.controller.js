@@ -201,30 +201,85 @@ exports.getDashboardStats = async (req, res) => {
         `;
         const missingInsuranceCount = Number(missingInsuranceArr?.[0]?.count || 0);
  
-        // 7. Vehicle Alerts
+        // 7. Vehicle Alerts - Robust logic consistent with vehicle.controller.js
+        const vehicleWhere = parsedOwnerId ? {
+            OR: [
+                { lease: { unit: { propertyId: { in: propertyIds } } } },
+                { tenant: { 
+                    OR: [
+                        { leases: { some: { unit: { propertyId: { in: propertyIds } } } } },
+                        { residentLease: { unit: { propertyId: { in: propertyIds } } } },
+                        { parent: { leases: { some: { unit: { propertyId: { in: propertyIds } } } } } }
+                    ]
+                } }
+            ]
+        } : {};
+
         const allVehicles = await prisma.vehicle.findMany({
-            where: parsedOwnerId ? {
-                lease: { unit: { propertyId: { in: propertyIds } } }
-            } : {},
+            where: vehicleWhere,
             include: { 
-                lease: true,
+                lease: { include: { unit: true } },
                 tenant: { 
                     include: { 
-                        leases: { where: { status: 'Active' } } 
+                        leases: { 
+                            where: { status: 'Active' },
+                            include: { unit: true }
+                        },
+                        residentLease: { include: { unit: true } },
+                        parent: {
+                            include: {
+                                leases: {
+                                    where: { status: 'Active' },
+                                    include: { unit: true }
+                                }
+                            }
+                        }
                     } 
                 } 
             }
         });
 
+        // Collect all active leases where these tenants appear as additional residents (roommates)
+        const vTenantIds = [...new Set(allVehicles.map(v => v.tenantId))];
+        const vResidentLeaseMap = {};
+        if (vTenantIds.length > 0) {
+            const resLeases = await prisma.lease.findMany({
+                where: {
+                    status: 'Active',
+                    residents: { some: { id: { in: vTenantIds } } }
+                },
+                include: {
+                    residents: { select: { id: true } },
+                    unit: true
+                }
+            });
+            for (const l of resLeases) {
+                for (const r of l.residents) {
+                    if (!vResidentLeaseMap[r.id]) vResidentLeaseMap[r.id] = l;
+                }
+            }
+        }
+
         const totalVehiclesCount = allVehicles.length;
         const unauthorizedVehiclesCount = allVehicles.filter(v => {
-            // Fallback to tenant active lease if vehicle leaseId is null
-            const lease = v.lease || v.tenant?.leases?.[0];
-            if (!lease) return true; // No lease linked at all
+            // Find best lease in priority order
+            const lease = v.lease 
+                || (v.tenant?.leases?.[0]) 
+                || v.tenant?.residentLease 
+                || vResidentLeaseMap[v.tenantId]
+                || (v.tenant?.parent?.leases?.[0]);
+
+            if (!lease) return true; // No lease found
             
             const now = new Date();
             const isInactive = lease.status !== 'Active';
             const isExpired = lease.endDate && new Date(lease.endDate) < now;
+            
+            // If we have an owner filter, also ensure this specific lease belongs to the owner's properties
+            if (parsedOwnerId && lease.unit) {
+                if (!propertyIds.includes(lease.unit.propertyId)) return true;
+            }
+
             return isInactive || isExpired;
         }).length;
 
