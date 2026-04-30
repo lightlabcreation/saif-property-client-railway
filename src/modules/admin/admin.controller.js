@@ -50,7 +50,7 @@ exports.getDashboardStats = async (req, res) => {
             totalUnits = await prisma.unit.count({
                 where: unitFilter
             });
- 
+
             // 3. Occupancy — any unit that is not 'Vacant' is considered occupied
             occupiedUnits = await prisma.unit.count({
                 where: {
@@ -92,7 +92,7 @@ exports.getDashboardStats = async (req, res) => {
                 _sum: { amount: true }
             })
         ]);
-        
+
         const grossRevenue = parseFloat(invoiceAgg._sum.paidAmount) || 0;
         const totalRefunds = parseFloat(refundAgg._sum.amount) || 0;
         const actualRevenueValue = grossRevenue - totalRefunds;
@@ -104,7 +104,7 @@ exports.getDashboardStats = async (req, res) => {
             },
             select: { balanceDue: true, category: true, description: true }
         });
-        
+
         let outstandingRent = 0;
         let outstandingDeposits = 0;
 
@@ -190,7 +190,7 @@ exports.getDashboardStats = async (req, res) => {
                 ...insuranceFilter
             }
         });
-        
+
         const missingInsuranceArr = await prisma.$queryRaw`
             SELECT COUNT(u.id) as count
             FROM user u
@@ -200,28 +200,30 @@ exports.getDashboardStats = async (req, res) => {
             )
         `;
         const missingInsuranceCount = Number(missingInsuranceArr?.[0]?.count || 0);
- 
+
         // 7. Vehicle Alerts - Robust logic consistent with vehicle.controller.js
         const vehicleWhere = parsedOwnerId ? {
             OR: [
                 { lease: { unit: { propertyId: { in: propertyIds } } } },
-                { tenant: { 
-                    OR: [
-                        { leases: { some: { unit: { propertyId: { in: propertyIds } } } } },
-                        { residentLease: { unit: { propertyId: { in: propertyIds } } } },
-                        { parent: { leases: { some: { unit: { propertyId: { in: propertyIds } } } } } }
-                    ]
-                } }
+                {
+                    tenant: {
+                        OR: [
+                            { leases: { some: { unit: { propertyId: { in: propertyIds } } } } },
+                            { residentLease: { unit: { propertyId: { in: propertyIds } } } },
+                            { parent: { leases: { some: { unit: { propertyId: { in: propertyIds } } } } } }
+                        ]
+                    }
+                }
             ]
         } : {};
 
         const allVehicles = await prisma.vehicle.findMany({
             where: vehicleWhere,
-            include: { 
+            include: {
                 lease: { include: { unit: true } },
-                tenant: { 
-                    include: { 
-                        leases: { 
+                tenant: {
+                    include: {
+                        leases: {
                             where: { status: 'Active' },
                             include: { unit: true }
                         },
@@ -234,8 +236,8 @@ exports.getDashboardStats = async (req, res) => {
                                 }
                             }
                         }
-                    } 
-                } 
+                    }
+                }
             }
         });
 
@@ -263,18 +265,18 @@ exports.getDashboardStats = async (req, res) => {
         const totalVehiclesCount = allVehicles.length;
         const unauthorizedVehiclesCount = allVehicles.filter(v => {
             // Find best lease in priority order
-            const lease = v.lease 
-                || (v.tenant?.leases?.[0]) 
-                || v.tenant?.residentLease 
+            const lease = v.lease
+                || (v.tenant?.leases?.[0])
+                || v.tenant?.residentLease
                 || vResidentLeaseMap[v.tenantId]
                 || (v.tenant?.parent?.leases?.[0]);
 
             if (!lease) return true; // No lease found
-            
+
             const now = new Date();
             const isInactive = lease.status !== 'Active';
             const isExpired = lease.endDate && new Date(lease.endDate) < now;
-            
+
             // If we have an owner filter, also ensure this specific lease belongs to the owner's properties
             if (parsedOwnerId && lease.unit) {
                 if (!propertyIds.includes(lease.unit.propertyId)) return true;
@@ -361,7 +363,7 @@ exports.getDashboardStats = async (req, res) => {
 
         const pendingRefundsList = pendingRefundsRaw.filter(inv => {
             const adjustments = inv.tenant?.refundAdjustments || [];
-            const hasFinishedOrCancelled = adjustments.some(adj => 
+            const hasFinishedOrCancelled = adjustments.some(adj =>
                 ['Completed', 'Issued', 'Cancelled', 'Received'].includes(adj.status)
             );
             return !hasFinishedOrCancelled;
@@ -439,7 +441,7 @@ exports.getDashboardStats = async (req, res) => {
             ...reservedUnits.map(u => {
                 const reservedBedroom = u.bedroomsList.find(b => b.reserved_flag);
                 const isBedroomRes = !u.reserved_flag && reservedBedroom;
-                
+
                 const getBestName = (user) => {
                     if (!user) return null;
                     if (user.name) return user.name;

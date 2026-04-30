@@ -52,7 +52,11 @@ const createInspection = async (req, res) => {
         const inspectorId = req.user?.id || 1; // Fallback to 1 if user context missing for testing
 
         // Check if template exists
-        const template = await prisma.inspectionTemplate.findUnique({ where: { id: templateId } });
+        if (!templateId || isNaN(parseInt(templateId))) {
+            return res.status(400).json({ success: false, message: 'Please select a valid inspection template.' });
+        }
+
+        const template = await prisma.inspectionTemplate.findUnique({ where: { id: parseInt(templateId) } });
         if (!template) return res.status(404).json({ success: false, message: 'Template not found' });
 
         // Lock template
