@@ -132,11 +132,13 @@ const getMoveInDashboard = async (req, res) => {
                 }
             }
 
-            // Transition: Missing Requirements -> Ready for Move-In
-            if (currentStatus === 'REQUIREMENTS_PENDING') {
+            // Transition: Missing Requirements <-> Ready for Move-In
+            if (currentStatus === 'REQUIREMENTS_PENDING' || currentStatus === 'READY_FOR_MOVE_IN') {
                 const reqsMet = rentPaid && depositPaid && insuranceProvided;
                 if (reqsMet || mi.overrideFlag) {
                     currentStatus = 'READY_FOR_MOVE_IN';
+                } else {
+                    currentStatus = 'REQUIREMENTS_PENDING';
                 }
             }
 

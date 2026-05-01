@@ -305,7 +305,9 @@ const syncMoveInStatus = async (unitId, { leaseId, bedroomId, targetDate }, tx =
             if (hasPrepTasks > 0 || unit.status_note?.includes('Preparation')) {
                 initialStatus = 'BLOCKED_IN_PREPARATION';
             } else if (unit.unit_ready_completed || unit.ready_for_leasing) {
-                initialStatus = 'READY_FOR_MOVE_IN';
+                // BUG FIX: Should be REQUIREMENTS_PENDING, not READY_FOR_MOVE_IN
+                // We need to verify Rent/Deposit before it's actually "Ready"
+                initialStatus = 'REQUIREMENTS_PENDING';
             }
         }
 
@@ -328,6 +330,12 @@ const syncMoveInStatus = async (unitId, { leaseId, bedroomId, targetDate }, tx =
                 });
             }
             return existing;
+        }
+
+        // BUG FIX: Do NOT create Move-In records for units without a lease or reservation
+        if (!leaseId && !unit.reserved_by_id) {
+            console.log(`[syncMoveInStatus] Skipping Move-In creation for Unit ${unitId} - No Lease or Reservation found.`);
+            return null;
         }
 
         return await pTx.moveIn.create({
