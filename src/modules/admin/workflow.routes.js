@@ -41,4 +41,10 @@ router.delete('/inspections/:id', authorize('ADMIN'), inspectionController.delet
 // Unit History
 router.get('/units/:unitId/history', workflowController.getUnitHistory);
 
+// Response Series Routes
+router.get('/response-series', inspectionController.getResponseSeries);
+router.post('/response-series', inspectionController.createResponseSeries);
+router.put('/response-series/:id', inspectionController.updateResponseSeries);
+router.delete('/response-series/:id', inspectionController.deleteResponseSeries);
+
 module.exports = router;

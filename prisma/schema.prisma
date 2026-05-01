@@ -69,6 +69,7 @@ model User {
   managedMoveOuts   MoveOut[]     @relation("Manager")
   overriddenMoveIns MoveIn[]      @relation("OverrideUser")
   unitHistory       UnitHistory[]
+  seriesCreated     TemplateSeries[] @relation("SeriesCreator")
 
   @@index([unitId], map: "user_unitId_fkey")
   @@index([buildingId], map: "user_buildingId_fkey")
@@ -429,6 +430,7 @@ model Ticket {
   inspection     Inspection? @relation(fields: [inspectionId], references: [id])
   property       Property?   @relation(fields: [propertyId], references: [id])
   unit           Unit?       @relation(fields: [unitId], references: [id])
+  blockingStatus BlockingStatus @default(NON_BLOCKING)
 
   @@index([userId], map: "Ticket_userId_fkey")
   @@map("ticket")
@@ -957,6 +959,7 @@ model InspectionItemResponse {
   notes        String?           @db.Text
   annotation   String?           @db.Text
   photoUrl     String?           @db.Text
+  annotatedPhotoUrl String?      @db.Text
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
   media        InspectionMedia[]
@@ -1054,4 +1057,36 @@ enum PrepTaskStage {
   CLEANING_IN_PROGRESS
   CLEANING_COMPLETED
   UNIT_READY
+}
+model TemplateSeries {
+  id          Int                @id @default(autoincrement())
+  name        String
+  description String?            @db.Text
+  responses   TemplateResponse[]
+  creatorId   Int?
+  isActive    Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  creator     User?              @relation("SeriesCreator", fields: [creatorId], references: [id])
+
+  @@map("templateseries")
+}
+
+model TemplateResponse {
+  id        Int            @id @default(autoincrement())
+  seriesId  Int
+  label     String
+  color     String         @default("indigo")
+  order     Int            @default(0)
+  series    TemplateSeries @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+
+  @@index([seriesId])
+  @@map("templateresponse")
+}
+
+enum BlockingStatus {
+  NON_BLOCKING
+  MOVE_IN
+  MOVE_OUT
+  BOTH
 }
