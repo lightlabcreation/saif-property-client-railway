@@ -101,7 +101,7 @@ const submitInspection = async (req, res) => {
         }
 
         // 2. All line items must be reviewed (checked on frontend, but we store them here)
-        
+
         // Use transaction via service for workflow transitions
         const result = await workflowService.completeInspection(parseInt(id), {
             signature,
@@ -363,7 +363,7 @@ const createTicket = async (req, res) => {
             // 3. Update Unit to Blocked status (Triggered by any inspection deficiency)
             await prisma.unit.update({
                 where: { id: inspection.unitId },
-                data: { 
+                data: {
                     status_note: `Blocked - Maintenance Required (${inspection.template?.type || 'INSPECTION'})`,
                     current_stage: 'PENDING_TICKETS'
                 }
@@ -406,7 +406,7 @@ const deleteTicket = async (req, res) => {
             if (remainingRequired === 0) {
                 await tx.unit.update({
                     where: { id: ticket.unitId },
-                    data: { 
+                    data: {
                         status_note: 'Unblocked - Maintenance Complete',
                         current_stage: 'READY_FOR_CLEANING'
                     }
@@ -424,7 +424,7 @@ const deleteTicket = async (req, res) => {
 const deleteInspection = async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         await prisma.$transaction(async (tx) => {
             // Delete responses
             await tx.inspectionItemResponse.deleteMany({ where: { inspectionId: parseInt(id) } });
@@ -452,7 +452,11 @@ module.exports = {
     downloadInspectionPDF,
     deleteTemplate,
     duplicateTemplate,
-    updateTemplate
+    updateTemplate,
+    getResponseSeries,
+    createResponseSeries,
+    updateResponseSeries,
+    deleteResponseSeries
 };
 
 async function updateTemplate(req, res) {
@@ -494,6 +498,80 @@ async function duplicateTemplate(req, res) {
             }
         });
         res.json({ success: true, data: clone });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+}
+
+async function getResponseSeries(req, res) {
+    try {
+        const series = await prisma.templateSeries.findMany({
+            include: { responses: { orderBy: { order: 'asc' } } }
+        });
+        res.json({ success: true, data: series });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+}
+
+async function createResponseSeries(req, res) {
+    try {
+        const { name, description, responses } = req.body;
+        const series = await prisma.templateSeries.create({
+            data: {
+                name,
+                description,
+                responses: {
+                    create: responses.map((r, idx) => ({
+                        label: r.label,
+                        color: r.color,
+                        order: idx
+                    }))
+                }
+            },
+            include: { responses: true }
+        });
+        res.status(201).json({ success: true, data: series });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+}
+
+async function updateResponseSeries(req, res) {
+    try {
+        const { id } = req.params;
+        const { name, description, responses } = req.body;
+
+        // Transaction to update series and sync responses
+        const updated = await prisma.$transaction(async (tx) => {
+            await tx.templateResponse.deleteMany({ where: { seriesId: parseInt(id) } });
+            return await tx.templateSeries.update({
+                where: { id: parseInt(id) },
+                data: {
+                    name,
+                    description,
+                    responses: {
+                        create: responses.map((r, idx) => ({
+                            label: r.label,
+                            color: r.color,
+                            order: idx
+                        }))
+                    }
+                },
+                include: { responses: true }
+            });
+        });
+        res.json({ success: true, data: updated });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+}
+
+async function deleteResponseSeries(req, res) {
+    try {
+        const { id } = req.params;
+        await prisma.templateSeries.delete({ where: { id: parseInt(id) } });
+        res.json({ success: true, message: 'Series deleted' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }

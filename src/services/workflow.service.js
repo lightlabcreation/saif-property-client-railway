@@ -10,8 +10,6 @@ const normalizeToNoon = (date) => {
     return d;
 };
 
-exports.normalizeToNoon = normalizeToNoon;
-
 /**
  * Workflow Service
  * Handles business logic for Move-In, Move-Out, and Unit Preparation
@@ -753,6 +751,7 @@ const cancelMoveOutFlow = async (leaseId, userId) => {
 };
 
 module.exports = {
+    normalizeToNoon,
     initMoveOutWorkflow,
     completeInspection,
     overrideMoveIn,

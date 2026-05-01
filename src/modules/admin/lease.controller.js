@@ -38,10 +38,45 @@ exports.getLeaseHistory = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 15;
+        const { status, propertyId, search, leaseType } = req.query;
         const skip = (page - 1) * limit;
+
+        const where = {};
+        if (status) {
+            where.status = status;
+        }
+        if (propertyId) {
+            where.unit = { propertyId: parseInt(propertyId) };
+        }
+        if (leaseType) {
+            where.leaseType = leaseType === 'Full Unit Lease' ? 'FULL_UNIT' : 'BEDROOM';
+        }
+        if (search) {
+            const searchLower = search.toLowerCase();
+            where.OR = [
+                {
+                    tenant: {
+                        OR: [
+                            { name: { contains: search } },
+                            { firstName: { contains: search } },
+                            { lastName: { contains: search } }
+                        ]
+                    }
+                },
+                {
+                    unit: {
+                        OR: [
+                            { unitNumber: { contains: search } },
+                            { property: { name: { contains: search } } }
+                        ]
+                    }
+                }
+            ];
+        }
 
         const [leases, total] = await Promise.all([
             prisma.lease.findMany({
+                where,
                 include: {
                     tenant: true,
                     residents: true, // Include co-tenants
@@ -54,7 +89,7 @@ exports.getLeaseHistory = async (req, res) => {
                 skip,
                 take: limit
             }),
-            prisma.lease.count()
+            prisma.lease.count({ where })
         ]);
 
         // Collect all unique tenant emails to check communication logs efficiently

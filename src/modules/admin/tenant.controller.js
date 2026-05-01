@@ -20,11 +20,30 @@ exports.getAllTenants = async (req, res) => {
 
         // Handle Status Filter (e.g. status=Active)
         if (status === 'Active') {
+            const now = new Date();
             whereClause.AND = [
                 {
                     OR: [
-                        { leases: { some: { status: 'Active' } } },
-                        { residentLease: { status: 'Active' } }
+                        { 
+                            leases: { 
+                                some: { 
+                                    status: 'Active',
+                                    OR: [
+                                        { endDate: null },
+                                        { endDate: { gte: now } }
+                                    ]
+                                } 
+                            } 
+                        },
+                        { 
+                            residentLease: { 
+                                status: 'Active',
+                                OR: [
+                                    { endDate: null },
+                                    { endDate: { gte: now } }
+                                ]
+                            } 
+                        }
                     ]
                 }
             ];

@@ -5,87 +5,15 @@ TypeError: tx.$transaction is not a function
     at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
     at async C:\Users\91969\Documents\propert_saif\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
 
-[2026-05-01T05:19:59.669Z] Lease Creation Transaction Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:758:19
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:20:15.234Z] Lease Creation Transaction Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:758:19
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:20:34.673Z] Lease Creation Transaction Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:758:19
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:20:48.583Z] Lease Creation Transaction Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:758:19
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:21:05.873Z] Lease Creation Transaction Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:758:19
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:21:11.914Z] Lease Creation Transaction Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:758:19
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:21:26.386Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
+[2026-05-01T05:55:40.706Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
 TypeError: workflowService.normalizeToNoon is not a function
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
+    at C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:893:40
+    at async Proxy._transactionWithCallback (C:\Users\Admin\Desktop\property_lightlab\backend\node_modules\@prisma\client\runtime\library.js:130:8000)
+    at async C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:761:20
 
-[2026-05-01T05:29:35.466Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
+[2026-05-01T05:55:48.827Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
 TypeError: workflowService.normalizeToNoon is not a function
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:29:39.778Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
-TypeError: workflowService.normalizeToNoon is not a function
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:50:20.662Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
-TypeError: workflowService.normalizeToNoon is not a function
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:50:24.992Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
-TypeError: workflowService.normalizeToNoon is not a function
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:55:57.318Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
-TypeError: workflowService.normalizeToNoon is not a function
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:56:02.946Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
-TypeError: workflowService.normalizeToNoon is not a function
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
-
-[2026-05-01T05:56:15.348Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
-TypeError: workflowService.normalizeToNoon is not a function
-    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
-    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
-    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
+    at C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:893:40
+    at async Proxy._transactionWithCallback (C:\Users\Admin\Desktop\property_lightlab\backend\node_modules\@prisma\client\runtime\library.js:130:8000)
+    at async C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:761:20
 
