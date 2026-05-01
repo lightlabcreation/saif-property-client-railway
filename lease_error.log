@@ -5,3 +5,15 @@ TypeError: tx.$transaction is not a function
     at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
     at async C:\Users\91969\Documents\propert_saif\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
 
+[2026-05-01T05:55:40.706Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
+TypeError: workflowService.normalizeToNoon is not a function
+    at C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:893:40
+    at async Proxy._transactionWithCallback (C:\Users\Admin\Desktop\property_lightlab\backend\node_modules\@prisma\client\runtime\library.js:130:8000)
+    at async C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:761:20
+
+[2026-05-01T05:55:48.827Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
+TypeError: workflowService.normalizeToNoon is not a function
+    at C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:893:40
+    at async Proxy._transactionWithCallback (C:\Users\Admin\Desktop\property_lightlab\backend\node_modules\@prisma\client\runtime\library.js:130:8000)
+    at async C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:761:20
+
