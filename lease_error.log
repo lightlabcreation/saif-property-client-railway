@@ -17,3 +17,9 @@ TypeError: workflowService.normalizeToNoon is not a function
     at async Proxy._transactionWithCallback (C:\Users\Admin\Desktop\property_lightlab\backend\node_modules\@prisma\client\runtime\library.js:130:8000)
     at async C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:761:20
 
+[2026-05-01T06:18:01.065Z] Lease Creation Transaction Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
+Error: This unit is currently RESERVED for another prospect during construction. You cannot create a lease for a different tenant until the reservation is cleared.
+    at C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:793:19
+    at async Proxy._transactionWithCallback (C:\Users\Admin\Desktop\property_lightlab\backend\node_modules\@prisma\client\runtime\library.js:130:8000)
+    at async C:\Users\Admin\Desktop\property_lightlab\backend\src\modules\admin\lease.controller.js:761:20
+
