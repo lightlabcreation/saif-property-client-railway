@@ -86,7 +86,7 @@ exports.createRefund = async (req, res) => {
 
             const requestedAmount = parseFloat(amount) || 0;
             if (requestedAmount > availableDeposit) {
-                throw new Error(`Insufficient deposit balance. Available: $${availableDeposit}`);
+                throw new Error(`Insufficient security deposit balance. You requested $${requestedAmount}, but only $${availableDeposit} is available for this unit after previous refunds and deductions.`);
             }
 
             // 2. Generate Request ID

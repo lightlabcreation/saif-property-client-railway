@@ -9,29 +9,69 @@ const { generateDashboardPDF } = require('../../utils/pdf.utils');
 
 const getMoveOutDashboard = async (req, res) => {
     try {
+        const today = new Date();
+        const thirtyDaysFromNow = new Date();
+        thirtyDaysFromNow.setDate(today.getDate() + 30);
+        const fourteenDaysAgo = new Date();
+        fourteenDaysAgo.setDate(today.getDate() - 14);
+
+        // 1. AUTO-TRIGGER: Find active leases expiring within 30 days (or expired in last 14 days) that don't have a Move-Out record yet
+        const expiringLeases = await prisma.lease.findMany({
+            where: {
+                status: 'Active',
+                endDate: {
+                    lte: thirtyDaysFromNow,
+                    gte: fourteenDaysAgo
+                },
+                moveOut: null // Only if not already in move-out flow
+            }
+        });
+
+        // Initialize workflow for each newly discovered expiring lease
+        for (const lease of expiringLeases) {
+            await workflowService.initMoveOutWorkflow(lease.id);
+        }
+
+        // 2. FETCH: Get all move-outs and filter by the 30-day rule (Rule 2.1)
         const moveOuts = await prisma.moveOut.findMany({
+            where: {
+                targetDate: {
+                    lte: thirtyDaysFromNow
+                    // We allow overdue ones (less than today) to stay visible
+                },
+                status: { not: 'CANCELLED' }
+            },
             include: {
-                unit: true,
+                unit: { 
+                    include: { 
+                        property: true,
+                        inspections: {
+                            orderBy: { createdAt: 'desc' },
+                            take: 5 // Get recent history
+                        }
+                    } 
+                },
                 lease: { include: { tenant: true } },
                 manager: { select: { id: true, name: true } }
             },
             orderBy: { targetDate: 'asc' }
         });
 
-        // Compute urgency
+        // Compute urgency and days remaining
         const data = moveOuts.map(mo => {
-            const today = new Date();
-            const target = new Date(mo.targetDate);
+            const target = workflowService.normalizeToNoon(mo.targetDate);
             const diffDays = Math.ceil((target - today) / (1000 * 60 * 60 * 24));
             return {
                 ...mo,
                 daysRemaining: diffDays,
-                urgency: diffDays < 0 ? 'OVERDUE' : diffDays <= 7 ? 'HIGH' : 'NORMAL'
+                urgency: diffDays < 0 ? 'OVERDUE' : diffDays <= 7 ? 'HIGH' : 'NORMAL',
+                inspections: mo.unit?.inspections || [] // Map unit inspections to move-out item for frontend
             };
         });
 
         res.json({ success: true, data });
     } catch (error) {
+        console.error('MOVE_OUT_DASHBOARD_ERROR:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -60,11 +100,19 @@ const getMoveInDashboard = async (req, res) => {
         // Add blocking status logic
         const data = moveIns.map(mi => {
             const today = new Date();
-            const target = new Date(mi.targetDate);
+            const target = workflowService.normalizeToNoon(mi.targetDate);
             const diffDays = Math.ceil((target - today) / (1000 * 60 * 60 * 24));
             
+            // 1. DB Checks: Check if Rent and Deposit are paid in the system
             const dbInsurance = mi.lease?.insurances?.some(i => i.status === 'ACTIVE') || false;
-            const dbDeposit = mi.lease?.invoices?.filter(inv => inv.category === 'SECURITY_DEPOSIT').every(inv => inv.status === 'paid') && (mi.lease?.invoices?.some(inv => inv.category === 'SECURITY_DEPOSIT') || false);
+            
+            // IMPROVED DEPOSIT CHECK: Check category 'SECURITY_DEPOSIT' OR any paid invoice with 'deposit' in description/category
+            const dbDeposit = mi.lease?.invoices?.some(inv => 
+                (inv.category === 'SECURITY_DEPOSIT' || inv.category === 'SERVICE' || inv.description?.toLowerCase().includes('deposit')) && 
+                inv.status === 'paid' && 
+                inv.amount >= (mi.lease.securityDeposit || 0)
+            ) || false;
+
             const dbRent = mi.lease?.invoices?.filter(inv => inv.category === 'RENT').some(inv => inv.status === 'paid');
             
             // 2. Requirements from JSON field (Manual Overrides)

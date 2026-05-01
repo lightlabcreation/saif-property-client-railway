@@ -76,6 +76,42 @@ const createInspection = async (req, res) => {
             }
         });
 
+        // WORKFLOW SYNC: Update Move-Out status only if BOTH required inspections are scheduled
+        if (template.type === 'VISUAL' || template.type === 'MOVE_OUT') {
+            const moveOut = await prisma.moveOut.findFirst({
+                where: { 
+                    leaseId: inspection.leaseId,
+                    status: { notIn: ['COMPLETED', 'CANCELLED'] }
+                }
+            });
+
+            if (moveOut) {
+                // Check if the other required type already exists for this lease
+                const existingInspections = await prisma.inspection.findMany({
+                    where: {
+                        leaseId: inspection.leaseId,
+                        template: { type: { in: ['VISUAL', 'MOVE_OUT'] } }
+                    },
+                    include: { template: true }
+                });
+
+                const hasVisual = existingInspections.some(i => i.template.type === 'VISUAL');
+                const hasMoveOut = existingInspections.some(i => i.template.type === 'MOVE_OUT');
+                if (hasVisual && hasMoveOut) {
+                    await prisma.moveOut.update({
+                        where: { id: moveOut.id },
+                        data: { status: 'VISUAL_INSPECTION_SCHEDULED' }
+                    });
+                } else {
+                    // Stay in Confirmed until BOTH are created
+                    await prisma.moveOut.update({
+                        where: { id: moveOut.id },
+                        data: { status: 'CONFIRMED' }
+                    });
+                }
+            }
+        }
+
         res.status(201).json({ success: true, data: inspection });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -298,6 +334,28 @@ const getInspectionDetails = async (req, res) => {
         });
 
         if (!inspection) return res.status(404).json({ success: false, message: 'Inspection not found' });
+
+        // WORKFLOW SYNC: If this is being viewed, mark the Move-Out flow as "In Progress"
+        if (inspection.status === 'DRAFT' && inspection.leaseId && (inspection.template?.type === 'MOVE_OUT' || inspection.template?.type === 'VISUAL')) {
+            try {
+                const moveOut = await prisma.moveOut.findFirst({
+                    where: { 
+                        leaseId: inspection.leaseId,
+                        status: { in: ['VISUAL_INSPECTION_SCHEDULED', 'FINAL_INSPECTION_SCHEDULED', 'CONFIRMED'] }
+                    }
+                });
+
+                if (moveOut) {
+                    await prisma.moveOut.update({
+                        where: { id: moveOut.id },
+                        data: { status: 'INSPECTION_IN_PROGRESS' }
+                    });
+                }
+            } catch (workflowErr) {
+                console.error('Workflow Sync Error (In Progress):', workflowErr.message);
+                // Non-blocking for inspection view
+            }
+        }
 
         res.json({ success: true, data: inspection });
     } catch (error) {
