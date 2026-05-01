@@ -59,3 +59,33 @@ TypeError: workflowService.normalizeToNoon is not a function
     at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
     at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
 
+[2026-05-01T05:50:20.662Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
+TypeError: workflowService.normalizeToNoon is not a function
+    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
+    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
+    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
+
+[2026-05-01T05:50:24.992Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
+TypeError: workflowService.normalizeToNoon is not a function
+    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
+    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
+    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
+
+[2026-05-01T05:55:57.318Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
+TypeError: workflowService.normalizeToNoon is not a function
+    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
+    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
+    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
+
+[2026-05-01T05:56:02.946Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
+TypeError: workflowService.normalizeToNoon is not a function
+    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
+    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
+    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
+
+[2026-05-01T05:56:15.348Z] Lease Creation Transaction Error: workflowService.normalizeToNoon is not a function
+TypeError: workflowService.normalizeToNoon is not a function
+    at C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:858:40
+    at async Proxy._transactionWithCallback (C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\node_modules\@prisma\client\runtime\library.js:130:8000)
+    at async C:\Users\91969\Documents\propert_saif_update\saif-property-client-railway\src\modules\admin\lease.controller.js:726:20
+
