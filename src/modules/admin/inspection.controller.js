@@ -192,17 +192,36 @@ const submitInspection = async (req, res) => {
 
 const getAllInspections = async (req, res) => {
     try {
-        const inspections = await prisma.inspection.findMany({
-            include: {
-                template: true,
-                unit: true,
-                lease: { include: { tenant: true } },
-                inspector: { select: { id: true, name: true } },
-                tickets: true
-            },
-            orderBy: { createdAt: 'desc' }
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        const [inspections, total] = await Promise.all([
+            prisma.inspection.findMany({
+                include: {
+                    template: true,
+                    unit: true,
+                    lease: { include: { tenant: true } },
+                    inspector: { select: { id: true, name: true } },
+                    tickets: true
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.inspection.count()
+        ]);
+
+        res.json({ 
+            success: true, 
+            data: inspections,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit)
+            }
         });
-        res.json({ success: true, data: inspections });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
