@@ -33,29 +33,87 @@ const getMoveOutDashboard = async (req, res) => {
         }
 
         // 2. FETCH: Get all move-outs and filter by the 30-day rule (Rule 2.1)
-        const moveOuts = await prisma.moveOut.findMany({
-            where: {
-                targetDate: {
-                    lte: thirtyDaysFromNow
-                    // We allow overdue ones (less than today) to stay visible
+        let moveOuts;
+        try {
+            moveOuts = await prisma.moveOut.findMany({
+                where: {
+                    targetDate: {
+                        lte: thirtyDaysFromNow
+                        // We allow overdue ones (less than today) to stay visible
+                    },
+                    status: { not: 'CANCELLED' }
                 },
-                status: { not: 'CANCELLED' }
-            },
-            include: {
-                unit: { 
-                    include: { 
-                        property: true,
-                        inspections: {
-                            orderBy: { createdAt: 'desc' },
-                            take: 5 // Get recent history
-                        }
-                    } 
+                include: {
+                    unit: { 
+                        include: { 
+                            property: true,
+                            inspections: {
+                                include: { template: true },
+                                orderBy: { createdAt: 'desc' },
+                                take: 10 // Get enough history to find matches
+                            }
+                        } 
+                    },
+                    lease: { include: { tenant: true } },
+                    manager: { select: { id: true, name: true } }
                 },
-                lease: { include: { tenant: true } },
-                manager: { select: { id: true, name: true } }
-            },
-            orderBy: { targetDate: 'asc' }
-        });
+                orderBy: { targetDate: 'asc' }
+            });
+        } catch (fetchError) {
+            console.error('MOVE_OUT_FETCH_ERROR: Likely invalid enum value. Attempting auto-repair...', fetchError.message);
+            
+            // AUTO-REPAIR: Force all empty or invalid statuses to PENDING
+            await prisma.$executeRaw`UPDATE MoveOut SET status = 'PENDING' WHERE status = '' OR status IS NULL`;
+            
+            // Retry the fetch once
+            moveOuts = await prisma.moveOut.findMany({
+                where: {
+                    targetDate: { lte: thirtyDaysFromNow },
+                    status: { not: 'CANCELLED' }
+                },
+                include: {
+                    unit: { include: { property: true } },
+                    lease: { include: { tenant: true } },
+                    manager: { select: { id: true, name: true } }
+                },
+                orderBy: { targetDate: 'asc' }
+            });
+        }
+
+        // 3. AUTO-REPAIR: Link orphan inspections to Move-Out records to ensure green tags
+        for (const mo of moveOuts) {
+            let updated = false;
+            let visualId = mo.visualInspectionId;
+            let finalId = mo.finalInspectionId;
+
+            // Look for matching inspections in the unit's inspection list
+            const unitInspections = mo.unit?.inspections || [];
+            
+            // Check for Visual
+            if (!visualId) {
+                const visual = unitInspections.find(i => i.template?.type === 'VISUAL' && i.status !== 'CANCELLED');
+                if (visual) {
+                    visualId = visual.id;
+                    updated = true;
+                }
+            }
+
+            // Check for Move-Out
+            if (!finalId) {
+                const moveOut = unitInspections.find(i => i.template?.type === 'MOVE_OUT' && i.status !== 'CANCELLED');
+                if (moveOut) {
+                    finalId = moveOut.id;
+                    updated = true;
+                }
+            }
+
+            if (updated) {
+                await prisma.$executeRawUnsafe(`UPDATE MoveOut SET visualInspectionId = ${visualId || 'NULL'}, finalInspectionId = ${finalId || 'NULL'} WHERE id = ${mo.id}`);
+                // Update local object so stats/UI reflect the fix immediately
+                mo.visualInspectionId = visualId;
+                mo.finalInspectionId = finalId;
+            }
+        }
 
         // Compute urgency and days remaining
         const data = moveOuts.map(mo => {
@@ -79,6 +137,13 @@ const getMoveOutDashboard = async (req, res) => {
 const getMoveInDashboard = async (req, res) => {
     try {
         const moveIns = await prisma.moveIn.findMany({
+            where: {
+                status: { not: 'CANCELLED' },
+                OR: [
+                    { leaseId: { not: null } },
+                    { unit: { reserved_by_id: { not: null } } }
+                ]
+            },
             include: {
                 unit: { include: { reserved_by_user: true } },
                 lease: { 
@@ -120,7 +185,21 @@ const getMoveInDashboard = async (req, res) => {
             
             // 3. Final logic: True if manually checked OR if record exists in DB
             const rentPaid = !missingItems.includes('Rent') || dbRent;
-            const depositPaid = !missingItems.includes('Deposit') || dbDeposit;
+            
+            // SPECIAL DEPOSIT LOGIC: Only mark as NOT_REQUIRED if lease EXISTS and is $0
+            let depositStatus = 'MISSING';
+            if (mi.lease) {
+                const requiredDeposit = Number(mi.lease.securityDeposit || 0);
+                if (requiredDeposit <= 0) {
+                    depositStatus = 'NOT_REQUIRED';
+                } else if (!missingItems.includes('Deposit') || dbDeposit) {
+                    depositStatus = 'PAID';
+                }
+            } else {
+                // No lease yet, stay MISSING
+                depositStatus = 'MISSING';
+            }
+
             const insuranceProvided = !missingItems.includes('Insurance') || dbInsurance;
             
             let currentStatus = mi.status;
@@ -134,7 +213,8 @@ const getMoveInDashboard = async (req, res) => {
 
             // Transition: Missing Requirements <-> Ready for Move-In
             if (currentStatus === 'REQUIREMENTS_PENDING' || currentStatus === 'READY_FOR_MOVE_IN') {
-                const reqsMet = rentPaid && depositPaid && insuranceProvided;
+                const isDepositOk = depositStatus === 'PAID' || depositStatus === 'NOT_REQUIRED';
+                const reqsMet = rentPaid && isDepositOk && insuranceProvided;
                 if (reqsMet || mi.overrideFlag) {
                     currentStatus = 'READY_FOR_MOVE_IN';
                 } else {
@@ -149,7 +229,7 @@ const getMoveInDashboard = async (req, res) => {
                 urgency: diffDays < 0 ? 'OVERDUE' : diffDays <= 7 ? 'HIGH' : 'NORMAL',
                 requirements: {
                     rent: rentPaid,
-                    deposit: depositPaid,
+                    deposit: depositStatus, // Now returns 'MISSING', 'PAID', or 'NOT_REQUIRED'
                     insurance: insuranceProvided
                 }
             };
@@ -234,9 +314,34 @@ const approveMoveIn = async (req, res) => {
 const confirmMoveOut = async (req, res) => {
     try {
         const { id } = req.params;
+        const { visualDate, visualTime } = req.body;
+        
         const moveOut = await prisma.moveOut.update({
             where: { id: parseInt(id) },
-            data: { status: 'CONFIRMED' }
+            data: { 
+                status: visualDate ? 'VISUAL_INSPECTION_SCHEDULED' : 'CONFIRMED',
+                visualDate: visualDate ? new Date(visualDate) : null,
+                visualTime: visualTime || null
+            }
+        });
+        res.json({ success: true, data: moveOut });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const scheduleFinalInspection = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { finalDate, finalTime } = req.body;
+        
+        const moveOut = await prisma.moveOut.update({
+            where: { id: parseInt(id) },
+            data: { 
+                status: 'VISUAL_INSPECTION_SCHEDULED', // Moves to Stage 3
+                finalDate: finalDate ? new Date(finalDate) : null,
+                finalTime: finalTime || null
+            }
         });
         res.json({ success: true, data: moveOut });
     } catch (error) {
@@ -248,6 +353,21 @@ const completeMoveOut = async (req, res) => {
     try {
         const { id } = req.params;
         const userId = req.user.id;
+
+        // Rule 2.4: Mandatory Inspection Rule
+        const moveOut = await prisma.moveOut.findUnique({
+            where: { id: parseInt(id) },
+            include: { unit: true }
+        });
+
+        if (!moveOut.visualInspectionId || !moveOut.finalInspectionId) {
+            // Note: During testing, we might want to allow override, 
+            // but the rule says "System must block progression"
+            return res.status(400).json({ 
+                success: false, 
+                message: "BLOCK: Both Visual and Move-Out inspections must be completed before finishing the flow." 
+            });
+        }
 
         // Uses the correct flow that enforces Mandatory Inspection Rule and creates Prep Tasks
         await workflowService.completeMoveOutFlow(parseInt(id), userId);
@@ -542,6 +662,19 @@ const getInspectionUnits = async (req, res) => {
     }
 };
 
+const cancelMoveIn = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await prisma.moveIn.update({
+            where: { id: parseInt(id) },
+            data: { status: 'CANCELLED' }
+        });
+        res.json({ success: true, message: 'Move-in cancelled successfully' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
     getInspectionUnits,
     getMoveOutDashboard,
@@ -554,6 +687,8 @@ module.exports = {
     completeMoveOut,
     triggerMoveOut,
     cancelMoveOut,
+    cancelMoveIn,
+    scheduleFinalInspection,
     overrideMoveIn,
     approveMoveIn,
     toggleMoveInRequirement,

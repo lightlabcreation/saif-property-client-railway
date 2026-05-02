@@ -156,6 +156,9 @@ const completeInspection = async (inspectionId, { signature, noDeficiencyConfirm
             }
         }
 
+        // 3. AUTO-TICKET: Generate maintenance tickets for any damages found (Phase 4)
+        await createTicketsFromInspection(inspectionId, updatedInspection.inspectorId, tx);
+
         return updatedInspection;
     });
 };
@@ -286,6 +289,27 @@ const syncMoveInStatus = async (unitId, { leaseId, bedroomId, targetDate }, tx =
             }
         });
 
+        // NEW: Renewal Prevention Logic
+        if (leaseId && !existing) {
+            const newLease = await pTx.lease.findUnique({ where: { id: leaseId } });
+            if (newLease) {
+                // Check if this tenant is already "Active" in this unit (Occupant Renewal)
+                const existingActiveLease = await pTx.lease.findFirst({
+                    where: {
+                        unitId: unitId,
+                        tenantId: newLease.tenantId,
+                        status: 'Active',
+                        id: { not: leaseId }
+                    }
+                });
+
+                if (existingActiveLease) {
+                    console.log(`[syncMoveInStatus] Skipping Move-In for Unit ${unitId} - Tenant ${newLease.tenantId} is already an active occupant (Renewal).`);
+                    return null;
+                }
+            }
+        }
+
         // Fetch unit to check unit_type and readiness
         const unit = await pTx.unit.findUnique({ where: { id: unitId } });
         if (!unit) return null;
@@ -362,9 +386,9 @@ const syncMoveInStatus = async (unitId, { leaseId, bedroomId, targetDate }, tx =
  * Parses inspection responses and creates maintenance tickets for damaged items.
  * Implements Rule 3.4 & 3.5: Gatekeeper for Required Tickets.
  */
-const createTicketsFromInspection = async (inspectionId, userId) => {
-    return await prisma.$transaction(async (tx) => {
-        const inspection = await tx.inspection.findUnique({
+const createTicketsFromInspection = async (inspectionId, userId, tx = prisma) => {
+    const logic = async (pTx) => {
+        const inspection = await pTx.inspection.findUnique({
             where: { id: inspectionId },
             include: { 
                 responses: { include: { media: true } }, 
@@ -378,6 +402,8 @@ const createTicketsFromInspection = async (inspectionId, userId) => {
             r.response?.toLowerCase().includes('damaged') || 
             r.response?.toLowerCase().includes('poor') ||
             r.response?.toLowerCase().includes('repair') ||
+            r.notes?.toLowerCase().includes('repair') ||
+            r.notes?.toLowerCase().includes('damaged') ||
             r.status?.toLowerCase() === 'poor'
         );
 
@@ -388,7 +414,7 @@ const createTicketsFromInspection = async (inspectionId, userId) => {
             // Default to required=true for MOVE_OUT, required=false for MOVE_IN (as per module rules)
             const isRequired = inspection.template.type === 'MOVE_OUT';
 
-            const ticket = await tx.ticket.create({
+            const ticket = await pTx.ticket.create({
                 data: {
                     userId: inspection.inspectorId,
                     propertyId: inspection.unit.propertyId,
@@ -404,7 +430,7 @@ const createTicketsFromInspection = async (inspectionId, userId) => {
             });
 
             // Create UnitPrepTask for this ticket
-            await tx.unitPrepTask.create({
+            await pTx.unitPrepTask.create({
                 data: {
                     unitId: inspection.unitId,
                     bedroomId: inspection.bedroomId,
@@ -421,7 +447,7 @@ const createTicketsFromInspection = async (inspectionId, userId) => {
 
         // Update unit status to reflect it's now in Prep Flow if it's a move-out
         if (inspection.template.type === 'MOVE_OUT' || inspection.template.type === 'VISUAL') {
-            await tx.unit.update({
+            await pTx.unit.update({
                 where: { id: inspection.unitId },
                 data: { 
                     status_note: 'Blocked - In Preparation (Deficiencies)',
@@ -431,7 +457,13 @@ const createTicketsFromInspection = async (inspectionId, userId) => {
         }
 
         return createdTickets;
-    });
+    };
+
+    if (tx === prisma) {
+        return await prisma.$transaction(logic);
+    } else {
+        return await logic(tx);
+    }
 };
 
 /**

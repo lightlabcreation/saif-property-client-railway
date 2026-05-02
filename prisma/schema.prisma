@@ -879,6 +879,16 @@ model MoveOut {
   status          MoveOutStatus @default(PENDING)
   targetDate      DateTime?
   actualDate      DateTime?
+  
+  // Scheduling Rule 2.3 & 2.4
+  visualDate      DateTime?
+  visualTime      String?
+  finalDate       DateTime?
+  finalTime       String?
+  
+  visualInspectionId  Int?
+  finalInspectionId   Int?
+  
   managerApproved Boolean       @default(false)
   managerId       Int?
   createdAt       DateTime      @default(now())
@@ -1034,6 +1044,7 @@ enum MoveOutStatus {
   CONFIRMED
   VISUAL_INSPECTION_SCHEDULED
   FINAL_INSPECTION_SCHEDULED
+  INSPECTION_IN_PROGRESS
   INSPECTIONS_COMPLETED
   COMPLETED
   CANCELLED

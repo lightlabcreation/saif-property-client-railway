@@ -37,10 +37,32 @@ const createTemplate = async (req, res) => {
 const getTemplates = async (req, res) => {
     try {
         const { type } = req.query;
-        const templates = await prisma.inspectionTemplate.findMany({
-            where: type ? { type } : {}
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        const where = type ? { type } : {};
+
+        const [templates, total] = await Promise.all([
+            prisma.inspectionTemplate.findMany({
+                where,
+                skip,
+                take: limit,
+                orderBy: { createdAt: 'desc' }
+            }),
+            prisma.inspectionTemplate.count({ where })
+        ]);
+
+        res.json({ 
+            success: true, 
+            data: templates,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit)
+            }
         });
-        res.json({ success: true, data: templates });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -48,8 +70,8 @@ const getTemplates = async (req, res) => {
 
 const createInspection = async (req, res) => {
     try {
-        const { templateId, unitId, leaseId, bedroomId, date } = req.body;
-        const inspectorId = req.user?.id || 1; // Fallback to 1 if user context missing for testing
+        const { templateId, unitId, leaseId, bedroomId, date, time } = req.body;
+        const inspectorId = req.user?.id || 1;
 
         // Check if template exists
         if (!templateId || isNaN(parseInt(templateId))) {
@@ -76,7 +98,7 @@ const createInspection = async (req, res) => {
             }
         });
 
-        // WORKFLOW SYNC: Update Move-Out status only if BOTH required inspections are scheduled
+        // WORKFLOW SYNC: Update Move-Out status to IN_PROGRESS when inspection starts
         if (template.type === 'VISUAL' || template.type === 'MOVE_OUT') {
             const moveOut = await prisma.moveOut.findFirst({
                 where: { 
@@ -86,34 +108,36 @@ const createInspection = async (req, res) => {
             });
 
             if (moveOut) {
-                // Check if the other required type already exists for this lease
-                const existingInspections = await prisma.inspection.findMany({
-                    where: {
-                        leaseId: inspection.leaseId,
-                        template: { type: { in: ['VISUAL', 'MOVE_OUT'] } }
-                    },
-                    include: { template: true }
-                });
+                const column = template.type === 'VISUAL' ? 'visualInspectionId' : 'finalInspectionId';
+                const dateColumn = template.type === 'VISUAL' ? 'visualDate' : 'finalDate';
+                const timeColumn = template.type === 'VISUAL' ? 'visualTime' : 'finalTime';
+                
+                const currentMoveOut = await prisma.moveOut.findUnique({ where: { id: moveOut.id } });
+                const willHaveVisual = template.type === 'VISUAL' || currentMoveOut.visualInspectionId;
+                const willHaveFinal = template.type === 'MOVE_OUT' || currentMoveOut.finalInspectionId;
 
-                const hasVisual = existingInspections.some(i => i.template.type === 'VISUAL');
-                const hasMoveOut = existingInspections.some(i => i.template.type === 'MOVE_OUT');
-                if (hasVisual && hasMoveOut) {
-                    await prisma.moveOut.update({
-                        where: { id: moveOut.id },
-                        data: { status: 'VISUAL_INSPECTION_SCHEDULED' }
-                    });
-                } else {
-                    // Stay in Confirmed until BOTH are created
-                    await prisma.moveOut.update({
-                        where: { id: moveOut.id },
-                        data: { status: 'CONFIRMED' }
-                    });
+                const newStatus = (willHaveVisual && willHaveFinal) ? 'INSPECTION_IN_PROGRESS' : currentMoveOut.status;
+
+                // Safe Date Formatting
+                let dateUpdateStr = 'NULL';
+                if (date) {
+                    try {
+                        const d = new Date(date);
+                        if (!isNaN(d.getTime())) {
+                            dateUpdateStr = `'${d.toISOString().slice(0, 19).replace('T', ' ')}'`;
+                        }
+                    } catch (e) {
+                        console.error('Date parsing failed:', e);
+                    }
                 }
+
+                await prisma.$executeRawUnsafe(`UPDATE MoveOut SET status = '${newStatus}', ${column} = ${inspection.id}, ${dateColumn} = ${dateUpdateStr}, ${timeColumn} = ${time ? `'${time}'` : 'NULL'} WHERE id = ${moveOut.id}`);
             }
         }
 
         res.status(201).json({ success: true, data: inspection });
     } catch (error) {
+        console.error('CREATE_INSPECTION_ERROR:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -138,27 +162,19 @@ const submitInspection = async (req, res) => {
 
         // 2. All line items must be reviewed (checked on frontend, but we store them here)
 
-        // Use transaction via service for workflow transitions
-        const result = await workflowService.completeInspection(parseInt(id), {
-            signature,
-            noDeficiencyConfirmed
-        });
-
-        // Save or update responses (with Cloudinary photo upload)
+        // 2. Save or update responses (with Cloudinary photo upload)
         if (responses && responses.length > 0) {
             for (const resp of responses) {
-                // If photo is a base64 string, upload to Cloudinary first
                 let photoUrl = resp.photo || null;
                 if (photoUrl && photoUrl.startsWith('data:image')) {
                     try {
                         photoUrl = await uploadBase64ToCloudinary(photoUrl, 'inspection_photos');
                     } catch (uploadErr) {
                         console.error('Cloudinary upload failed for response photo:', uploadErr.message);
-                        photoUrl = null; // Don't block submission if upload fails
+                        photoUrl = null;
                     }
                 }
 
-                // Create or Update based on whether ID exists
                 if (resp.id) {
                     await prisma.inspectionItemResponse.update({
                         where: { id: resp.id },
@@ -183,6 +199,12 @@ const submitInspection = async (req, res) => {
                 }
             }
         }
+
+        // 3. Complete workflow and generate tickets
+        const result = await workflowService.completeInspection(parseInt(id), {
+            signature,
+            noDeficiencyConfirmed
+        });
 
         res.json({ success: true, data: result });
     } catch (error) {
@@ -365,10 +387,9 @@ const getInspectionDetails = async (req, res) => {
                 });
 
                 if (moveOut) {
-                    await prisma.moveOut.update({
-                        where: { id: moveOut.id },
-                        data: { status: 'INSPECTION_IN_PROGRESS' }
-                    });
+                    if (moveOut.visualInspectionId && moveOut.finalInspectionId) {
+                        await prisma.$executeRaw`UPDATE MoveOut SET status = 'INSPECTION_IN_PROGRESS' WHERE id = ${moveOut.id}`;
+                    }
                 }
             } catch (workflowErr) {
                 console.error('Workflow Sync Error (In Progress):', workflowErr.message);
@@ -594,14 +615,18 @@ async function getResponseSeries(req, res) {
 async function createResponseSeries(req, res) {
     try {
         const { name, description, responses } = req.body;
+        if (!name) return res.status(400).json({ success: false, message: 'Group name is required' });
+
+        const responseList = Array.isArray(responses) ? responses : [];
+
         const series = await prisma.templateSeries.create({
             data: {
                 name,
                 description,
                 responses: {
-                    create: responses.map((r, idx) => ({
-                        label: r.label,
-                        color: r.color,
+                    create: responseList.map((r, idx) => ({
+                        label: r.label || 'Unnamed Option',
+                        color: r.color || 'indigo',
                         order: idx
                     }))
                 }
@@ -618,8 +643,10 @@ async function updateResponseSeries(req, res) {
     try {
         const { id } = req.params;
         const { name, description, responses } = req.body;
+        if (!name) return res.status(400).json({ success: false, message: 'Group name is required' });
 
-        // Transaction to update series and sync responses
+        const responseList = Array.isArray(responses) ? responses : [];
+
         const updated = await prisma.$transaction(async (tx) => {
             await tx.templateResponse.deleteMany({ where: { seriesId: parseInt(id) } });
             return await tx.templateSeries.update({
@@ -628,9 +655,9 @@ async function updateResponseSeries(req, res) {
                     name,
                     description,
                     responses: {
-                        create: responses.map((r, idx) => ({
-                            label: r.label,
-                            color: r.color,
+                        create: responseList.map((r, idx) => ({
+                            label: r.label || 'Unnamed Option',
+                            color: r.color || 'indigo',
                             order: idx
                         }))
                     }
