@@ -406,7 +406,7 @@ const getInspectionDetails = async (req, res) => {
 const createTicket = async (req, res) => {
     try {
         const { id } = req.params;
-        const { questionId, questionText, notes, priority, category, type } = req.body;
+        const { questionId, questionText, notes, priority, category, type, isRequired, blockingStatus } = req.body;
 
         const inspection = await prisma.inspection.findUnique({
             where: { id: parseInt(id) },
@@ -429,8 +429,9 @@ const createTicket = async (req, res) => {
                     category: category || 'MAINTENANCE',
                     type: type || 'REPAIR',
                     status: 'Open',
-                    source: inspection.template?.type === 'MOVE_OUT' ? 'MOVE_OUT' : 'MOVE_IN',
-                    isRequired: true,
+                    source: inspection.template?.type || 'INSPECTION',
+                    isRequired: isRequired !== undefined ? isRequired : true,
+                    blockingStatus: blockingStatus || 'NON_BLOCKING',
                     inspectionId: parseInt(id)
                 }
             });
@@ -448,7 +449,7 @@ const createTicket = async (req, res) => {
                     ticketId: ticket.id,
                     title: questionText,
                     description: notes,
-                    isRequired: true,
+                    isRequired: isRequired !== undefined ? isRequired : true,
                     stage: 'PENDING_TICKETS'
                 }
             });

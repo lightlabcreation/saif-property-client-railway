@@ -59,7 +59,8 @@ exports.getAllTickets = async (req, res) => {
                 },
                 propertyId: t.propertyId,
                 unitId: t.unitId,
-                tenantId: t.userId
+                tenantId: t.userId,
+                isRequired: t.isRequired
             };
         });
 

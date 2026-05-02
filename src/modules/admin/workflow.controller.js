@@ -405,6 +405,11 @@ const getUnitPrepDashboard = async (req, res) => {
                     where: { status: 'Active' },
                     include: { tenant: true }
                 },
+                moveOuts: {
+                    orderBy: { createdAt: 'desc' },
+                    take: 1,
+                    include: { lease: { include: { tenant: true } } }
+                },
                 reserved_by_user: true
             }
         });
@@ -439,6 +444,7 @@ const getUnitPrepDashboard = async (req, res) => {
             confirmedMoveOuts: await prisma.moveOut.count({ where: { status: 'CONFIRMED' } }),
             inspectionsScheduled: await prisma.inspection.count({ where: { status: 'DRAFT' } }),
             inRepair: dashboardData.filter(d => d.hasRequiredTickets).length,
+            cleaningTotal: dashboardData.filter(d => d.current_stage === 'READY_FOR_CLEANING' || d.current_stage === 'CLEANING_IN_PROGRESS').length,
             readyForCompletion: dashboardData.filter(d => d.current_stage === 'CLEANING_COMPLETED').length,
             unitsReady: dashboardData.filter(d => d.current_stage === 'UNIT_READY').length
         };
