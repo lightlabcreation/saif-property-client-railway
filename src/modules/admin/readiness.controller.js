@@ -69,15 +69,20 @@ exports.getReadinessStats = async (req, res) => {
 
         const units = await prisma.unit.findMany({ 
             where,
-            include: { bedroomsList: true }
+            include: { 
+                bedroomsList: true,
+                leases: { where: { status: 'Active' } }
+            }
         });
 
         const totalUnits = units.length;
         const readyForLeasing = units.filter(u => u.ready_for_leasing || u.unit_status === 'ACTIVE').length;
         
-        // Consistent reservation count
+        // Consistent reservation count: include units with active leases
         const reservedUnits = units.filter(u => 
-            u.reserved_flag || u.bedroomsList.some(b => b.reserved_flag)
+            u.reserved_flag || 
+            u.bedroomsList.some(b => b.reserved_flag) ||
+            (u.leases && u.leases.some(l => l.status === 'Active'))
         ).length;
         
         const now = new Date();
@@ -192,6 +197,7 @@ exports.getReadinessDashboard = async (req, res) => {
                 },
                 leases: {
                     where: { status: 'Active' },
+                    include: { tenant: true }, // Include tenant for the name
                     orderBy: { createdAt: 'desc' },
                     take: 1
                 }
@@ -259,8 +265,8 @@ exports.getReadinessDashboard = async (req, res) => {
                 dynamicStage = `${pendingStep.label} ${statusSuffix}`;
             }
 
-            const isReserved = u.is_reserved || u.reserved_flag || u.bedroomsList.some(b => b.reserved_flag);
             const hasActiveLease = u.leases.length > 0;
+            const isReserved = u.is_reserved || u.reserved_flag || u.bedroomsList.some(b => b.reserved_flag) || hasActiveLease;
 
             // MODULE 1, RULE 1.5 & 1.6: Blocked Status Logic
             if (hasActiveLease && !isFullyReady) {
@@ -295,8 +301,12 @@ exports.getReadinessDashboard = async (req, res) => {
                 isPriority,
                 hasActiveLease,
                 isActive: u.ready_for_leasing,
-                reservedBy: u.reserved_by_user?.name || u.status_note || u.bedroomsList.find(b => b.reserved_flag)?.reserved_by_user?.name || null,
-                moveInDate: u.tentative_move_in_date || u.bedroomsList.find(b => b.reserved_flag)?.tentative_move_in_date,
+                reservedBy: u.leases[0]?.tenant?.name || 
+                            u.reserved_by_user?.name || 
+                            u.status_note || 
+                            u.bedroomsList.find(b => b.reserved_flag)?.reserved_by_user?.name || 
+                            null,
+                moveInDate: u.leases[0]?.startDate || u.tentative_move_in_date || u.bedroomsList.find(b => b.reserved_flag)?.tentative_move_in_date,
                 targetDates: {
                     gc_delivered: u.gc_delivered_target_date,
                     gc_deficiencies: u.gc_deficiencies_target_date,
