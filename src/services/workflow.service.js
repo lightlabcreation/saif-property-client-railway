@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const AppError = require('../utils/AppError');
 
 /**
  * Normalizes a date to 12:00 PM (Noon) UTC to prevent timezone shifting
@@ -72,7 +73,7 @@ const initMoveOutWorkflow = async (leaseId, tx = prisma) => {
 /**
  * Complete Inspection & Generate Deficiency Tasks
  */
-const completeInspection = async (inspectionId, { signature, noDeficiencyConfirmed, ticketCategory = 'MAINTENANCE' }) => {
+const completeInspection = async (inspectionId, { signature, inspectorSignature, noDeficiencyConfirmed, ticketCategory = 'MAINTENANCE' }) => {
     return await prisma.$transaction(async (tx) => {
         const inspection = await tx.inspection.findUnique({
             where: { id: inspectionId },
@@ -91,6 +92,7 @@ const completeInspection = async (inspectionId, { signature, noDeficiencyConfirm
             data: {
                 status: 'COMPLETED',
                 tenantSignature: signature,
+                inspectorSignature: inspectorSignature,
                 noDeficiencyConfirmed,
                 completedAt: new Date()
             }
@@ -560,29 +562,48 @@ const completeMoveIn = async (moveInId, userId) => {
 
         // 2. Check Requirements (Rent, Deposit, Insurance)
         if (!moveIn.overrideFlag) {
-            // Check Invoices (Rent & Deposit)
-            const unpaidInvoices = await tx.invoice.findMany({
-                where: {
-                    leaseId: moveIn.leaseId,
-                    status: { not: 'paid' },
-                    category: { in: ['RENT', 'SECURITY_DEPOSIT'] }
+            const missingItems = Array.isArray(moveIn.missingItems) ? moveIn.missingItems : [];
+            
+            // Check Rent
+            if (missingItems.includes('Rent')) {
+                const unpaidRent = await tx.invoice.findFirst({
+                    where: {
+                        leaseId: moveIn.leaseId,
+                        status: { not: 'paid' },
+                        category: 'RENT'
+                    }
+                });
+                if (unpaidRent) {
+                    throw new AppError('Move-in blocked: Unpaid rent invoice.', 400);
                 }
-            });
+            }
 
-            if (unpaidInvoices.length > 0) {
-                throw new AppError(`Move-in blocked: Unpaid ${unpaidInvoices[0].category.toLowerCase()} invoices.`, 400);
+            // Check Deposit
+            if (missingItems.includes('Deposit')) {
+                const unpaidDeposit = await tx.invoice.findFirst({
+                    where: {
+                        leaseId: moveIn.leaseId,
+                        status: { not: 'paid' },
+                        category: 'SECURITY_DEPOSIT'
+                    }
+                });
+                if (unpaidDeposit) {
+                    throw new AppError('Move-in blocked: Unpaid security deposit invoice.', 400);
+                }
             }
 
             // Check Insurance
-            const activeInsurance = await tx.insurance.findFirst({
-                where: {
-                    leaseId: moveIn.leaseId,
-                    status: 'ACTIVE'
-                }
-            });
+            if (missingItems.includes('Insurance')) {
+                const activeInsurance = await tx.insurance.findFirst({
+                    where: {
+                        leaseId: moveIn.leaseId,
+                        status: 'ACTIVE'
+                    }
+                });
 
-            if (!activeInsurance) {
-                throw new AppError('Move-in blocked: Active insurance certificate required.', 400);
+                if (!activeInsurance) {
+                    throw new AppError('Move-in blocked: Active insurance certificate required.', 400);
+                }
             }
         }
 

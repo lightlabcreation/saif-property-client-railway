@@ -1296,3 +1296,35 @@ exports.sendInvite = async (req, res) => {
         res.status(500).json({ message: 'Server error while sending invite' });
     }
 };
+
+exports.getUsers = async (req, res) => {
+    try {
+        const { role } = req.query;
+        let where = {};
+
+        if (role) {
+            const roles = role.split(',');
+            where = { role: { in: roles } };
+        } else {
+            where = { role: { in: ['ADMIN', 'COWORKER'] } };
+        }
+
+        const users = await prisma.user.findMany({
+            where,
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                name: true,
+                email: true,
+                role: true,
+                title: true
+            },
+            orderBy: { name: 'asc' }
+        });
+
+        res.json({ success: true, data: users });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};

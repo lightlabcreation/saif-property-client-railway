@@ -89,9 +89,12 @@ exports.createRefund = async (req, res) => {
                 throw new Error(`Insufficient security deposit balance. You requested $${requestedAmount}, but only $${availableDeposit} is available for this unit after previous refunds and deductions.`);
             }
 
-            // 2. Generate Request ID
-            const count = await tx.refundAdjustment.count();
-            const requestId = `RA-${String(count + 1).padStart(5, '0')}`;
+            // 2. Generate Request ID (Robust logic: Find max existing ID instead of count)
+            const lastRefund = await tx.refundAdjustment.findFirst({
+                orderBy: { id: 'desc' }
+            });
+            const nextNum = (lastRefund?.id || 0) + 1;
+            const requestId = `RA-${String(nextNum).padStart(5, '0')}`;
 
             // 3. Create Refund Adjustment Record
             let finalIssuedDate = issuedDate ? new Date(issuedDate) : null;

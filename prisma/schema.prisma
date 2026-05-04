@@ -945,6 +945,7 @@ model Inspection {
   leaseId               Int?
   inspectorId           Int?
   tenantSignature       String?          @db.Text
+  inspectorSignature    String?          @db.Text
   noDeficiencyConfirmed Boolean          @default(false)
   status                InspectionStatus @default(DRAFT)
   completedAt           DateTime?

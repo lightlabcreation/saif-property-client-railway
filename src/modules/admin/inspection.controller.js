@@ -71,7 +71,7 @@ const getTemplates = async (req, res) => {
 const createInspection = async (req, res) => {
     try {
         const { templateId, unitId, leaseId, bedroomId, date, time } = req.body;
-        const inspectorId = req.user?.id || 1;
+        const inspectorId = req.body.inspectorId ? parseInt(req.body.inspectorId) : (req.user?.id || 1);
 
         // Check if template exists
         if (!templateId || isNaN(parseInt(templateId))) {
@@ -145,7 +145,7 @@ const createInspection = async (req, res) => {
 const submitInspection = async (req, res) => {
     try {
         const { id } = req.params;
-        const { signature, noDeficiencyConfirmed, responses } = req.body;
+        const { signature, inspectorSignature, noDeficiencyConfirmed, responses } = req.body;
 
         const inspection = await prisma.inspection.findUnique({
             where: { id: parseInt(id) },
@@ -155,9 +155,11 @@ const submitInspection = async (req, res) => {
         if (!inspection) return res.status(404).json({ success: false, message: 'Inspection not found' });
 
         // Validate completion rules
-        // 1. Tenant signature is mandatory
-        if (!signature && !noDeficiencyConfirmed) {
-            return res.status(400).json({ success: false, message: 'Tenant signature or No Deficiency confirmation is required.' });
+                // 1. Dual signatures are mandatory unless no deficiency is confirmed
+        if (!noDeficiencyConfirmed) {
+            if (!signature) return res.status(400).json({ success: false, message: 'Tenant signature is required.' });
+            if (!inspectorSignature) return res.status(400).json({ success: false, message: 'Inspector signature is required.' });
+
         }
 
         // 2. All line items must be reviewed (checked on frontend, but we store them here)
@@ -165,36 +167,60 @@ const submitInspection = async (req, res) => {
         // 2. Save or update responses (with Cloudinary photo upload)
         if (responses && responses.length > 0) {
             for (const resp of responses) {
-                let photoUrl = resp.photo || null;
-                if (photoUrl && photoUrl.startsWith('data:image')) {
-                    try {
-                        photoUrl = await uploadBase64ToCloudinary(photoUrl, 'inspection_photos');
-                    } catch (uploadErr) {
-                        console.error('Cloudinary upload failed for response photo:', uploadErr.message);
-                        photoUrl = null;
+                const photos = resp.photos || (resp.photo ? [resp.photo] : []);
+                const uploadedUrls = [];
+
+                for (let photoData of photos) {
+                    if (photoData.startsWith('data:image')) {
+                        try {
+                            const url = await uploadBase64ToCloudinary(photoData, 'inspection_photos');
+                            uploadedUrls.push(url);
+                        } catch (uploadErr) {
+                            console.error('Cloudinary upload failed:', uploadErr.message);
+                        }
+                    } else if (photoData.startsWith('http')) {
+                        uploadedUrls.push(photoData);
                     }
                 }
 
+                const primaryPhoto = uploadedUrls[0] || null;
+
+                let dbResponse;
                 if (resp.id) {
-                    await prisma.inspectionItemResponse.update({
+                    dbResponse = await prisma.inspectionItemResponse.update({
                         where: { id: resp.id },
                         data: {
                             response: resp.response,
                             notes: resp.notes,
                             annotation: resp.annotation,
-                            photoUrl: photoUrl
+                            photoUrl: primaryPhoto
                         }
                     });
                 } else {
-                    await prisma.inspectionItemResponse.create({
+                    dbResponse = await prisma.inspectionItemResponse.create({
                         data: {
                             inspectionId: parseInt(id),
                             question: resp.question || 'Unknown',
                             response: resp.response,
                             notes: resp.notes,
                             annotation: resp.annotation,
-                            photoUrl: photoUrl
+                            photoUrl: primaryPhoto
                         }
+                    });
+                }
+
+                // Update Media Table
+                if (uploadedUrls.length > 0) {
+                    // Clear old media for this response if updating
+                    if (resp.id) {
+                        await prisma.inspectionMedia.deleteMany({ where: { responseId: dbResponse.id } });
+                    }
+                    
+                    await prisma.inspectionMedia.createMany({
+                        data: uploadedUrls.map(url => ({
+                            responseId: dbResponse.id,
+                            url: url
+                        }))
                     });
                 }
             }
@@ -203,6 +229,7 @@ const submitInspection = async (req, res) => {
         // 3. Complete workflow and generate tickets
         const result = await workflowService.completeInspection(parseInt(id), {
             signature,
+            inspectorSignature,
             noDeficiencyConfirmed
         });
 
@@ -274,7 +301,12 @@ const updateInspection = async (req, res) => {
                 entityId: parseInt(id),
                 details: `Signature changed from ${existing.tenantSignature ? 'Existing' : 'None'} to New Signature`
             });
+        }
+         if (signature !== undefined) {
             updates.tenantSignature = signature;
+        }
+        if (req.body.inspectorSignature !== undefined) {
+            updates.inspectorSignature = req.body.inspectorSignature;
         }
 
         await prisma.$transaction(async (tx) => {
@@ -406,7 +438,7 @@ const getInspectionDetails = async (req, res) => {
 const createTicket = async (req, res) => {
     try {
         const { id } = req.params;
-        const { questionId, questionText, notes, priority, category, type, isRequired, blockingStatus } = req.body;
+        const { questionId, questionText, response, notes, priority, category, type, isRequired, blockingStatus, photos } = req.body;
 
         const inspection = await prisma.inspection.findUnique({
             where: { id: parseInt(id) },
@@ -417,13 +449,13 @@ const createTicket = async (req, res) => {
 
         let ticket;
         try {
-            // 1. Create Maintenance Ticket
+            // 1. Create Ticket (Removed 'Maintenance' from logic if any, but mainly pre-filling subject)
             ticket = await prisma.ticket.create({
                 data: {
                     userId: inspection.inspectorId,
                     propertyId: inspection.unit?.propertyId,
                     unitId: inspection.unitId,
-                    subject: `DEFICIENCY: ${questionText}`,
+                    subject: response ? `${questionText}: ${response}` : questionText,
                     description: `Identified during inspection. Notes: ${notes}`,
                     priority: priority || 'High',
                     category: category || 'MAINTENANCE',
@@ -432,7 +464,10 @@ const createTicket = async (req, res) => {
                     source: inspection.template?.type || 'INSPECTION',
                     isRequired: isRequired !== undefined ? isRequired : true,
                     blockingStatus: blockingStatus || 'NON_BLOCKING',
-                    inspectionId: parseInt(id)
+                    inspectionId: parseInt(id),
+                    attachmentUrls: Array.isArray(photos) 
+                        ? JSON.stringify(photos.map(url => ({ type: 'image', url })))
+                        : (photos ? JSON.stringify([{ type: 'image', url: photos }]) : null)
                 }
             });
         } catch (ticketErr) {
@@ -459,14 +494,16 @@ const createTicket = async (req, res) => {
         }
 
         try {
-            // 3. Update Unit to Blocked status (Triggered by any inspection deficiency)
-            await prisma.unit.update({
-                where: { id: inspection.unitId },
-                data: {
-                    status_note: `Blocked - Maintenance Required (${inspection.template?.type || 'INSPECTION'})`,
-                    current_stage: 'PENDING_TICKETS'
-                }
-            });
+            // 3. Update Unit to Blocked status IF ticket is REQUIRED
+            if (isRequired !== false) {
+                await prisma.unit.update({
+                    where: { id: inspection.unitId },
+                    data: {
+                        status_note: `Blocked - Required Repair Found (${inspection.template?.type || 'INSPECTION'})`,
+                        current_stage: 'PENDING_TICKETS'
+                    }
+                });
+            }
         } catch (unitErr) {
             console.error('UNIT_UPDATE_ERROR:', unitErr);
         }
@@ -555,7 +592,8 @@ module.exports = {
     getResponseSeries,
     createResponseSeries,
     updateResponseSeries,
-    deleteResponseSeries
+    deleteResponseSeries,
+    uploadInspectionMedia
 };
 
 async function updateTemplate(req, res) {
@@ -678,6 +716,19 @@ async function deleteResponseSeries(req, res) {
         await prisma.templateSeries.delete({ where: { id: parseInt(id) } });
         res.json({ success: true, message: 'Series deleted' });
     } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+}
+
+async function uploadInspectionMedia(req, res) {
+    try {
+        const { image } = req.body;
+        if (!image) return res.status(400).json({ success: false, message: 'No image provided' });
+        
+        const url = await uploadBase64ToCloudinary(image, 'inspection_photos');
+        res.json({ success: true, url });
+    } catch (error) {
+        console.error('Upload Error:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 }

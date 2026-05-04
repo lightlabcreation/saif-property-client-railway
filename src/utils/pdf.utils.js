@@ -399,26 +399,40 @@ const generateInspectionPDF = async (inspection, res) => {
     }
 
     // Signature
-    if (inspection.tenantSignature) {
-        if (doc.y > 600) doc.addPage();
+    if (inspection.tenantSignature || inspection.inspectorSignature) {
+        if (doc.y > 550) doc.addPage();
         
         doc.moveDown(2);
         doc.fontSize(10).fillColor(colors.secondary).font('Helvetica-Bold').text('SIGNATURES');
         doc.moveTo(50, doc.y + 5).lineTo(550, doc.y + 5).strokeColor(colors.border).stroke();
         doc.moveDown(1.5);
         
-        doc.fillColor(colors.text).font('Helvetica-Bold').text('Tenant Signature:', { align: 'center' });
-        doc.moveDown(1);
-        try {
-            const sigWidth = 200;
-            const xPos = (doc.page.width - sigWidth) / 2;
-            
-            // For signatures (usually small), we can estimate or just use fixed height
-            doc.image(inspection.tenantSignature, xPos, doc.y, { width: sigWidth });
-            doc.y += 80; // Estimated height for signature
-        } catch (e) {
-            doc.fontSize(8).fillColor('red').text('Error rendering signature image.', { align: 'center' });
+        const sigWidth = 180;
+        const startY = doc.y;
+
+        // Tenant Signature
+        if (inspection.tenantSignature) {
+            doc.fillColor(colors.text).font('Helvetica-Bold').fontSize(10).text('Tenant Signature:', 50, startY);
+            try {
+                doc.image(inspection.tenantSignature, 50, startY + 20, { width: sigWidth });
+                doc.fontSize(8).fillColor(colors.secondary).text(`Signed by: ${inspection.lease?.tenant?.name || 'Tenant'}`, 50, startY + 90);
+            } catch (e) {
+                doc.fontSize(8).fillColor('red').text('Error rendering tenant signature.', 50, startY + 40);
+            }
         }
+
+        // Inspector Signature
+        if (inspection.inspectorSignature) {
+            doc.fillColor(colors.text).font('Helvetica-Bold').fontSize(10).text('Inspector Signature:', 320, startY);
+            try {
+                doc.image(inspection.inspectorSignature, 320, startY + 20, { width: sigWidth });
+                doc.fontSize(8).fillColor(colors.secondary).text(`Signed by: ${inspection.inspector?.name || 'Inspector'}`, 320, startY + 90);
+            } catch (e) {
+                doc.fontSize(8).fillColor('red').text('Error rendering inspector signature.', 320, startY + 40);
+            }
+        }
+        
+        doc.y = Math.max(doc.y, startY + 110);
     }
 
     doc.end();

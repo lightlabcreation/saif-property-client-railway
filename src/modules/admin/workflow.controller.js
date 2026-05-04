@@ -145,7 +145,17 @@ const getMoveInDashboard = async (req, res) => {
                 ]
             },
             include: {
-                unit: { include: { reserved_by_user: true } },
+                unit: { 
+                    include: { 
+                        reserved_by_user: true,
+                        Ticket: {
+                            where: {
+                                status: 'Open',
+                                isRequired: true
+                            }
+                        }
+                    } 
+                },
                 lease: { 
                     include: { 
                         tenant: true,
@@ -157,9 +167,20 @@ const getMoveInDashboard = async (req, res) => {
                         } 
                     } 
                 },
+                overrideUser: { select: { id: true, name: true } },
                 overrideUser: { select: { id: true, name: true } }
             },
             orderBy: { targetDate: 'asc' }
+        });
+
+        // 0. Fetch all recent move-in inspections for these units to avoid N+1
+        const unitIds = [...new Set(moveIns.map(mi => mi.unitId))];
+        const allInspections = await prisma.inspection.findMany({
+            where: {
+                unitId: { in: unitIds },
+                template: { type: 'MOVE_IN' }
+            },
+            orderBy: { createdAt: 'desc' }
         });
 
         // Add blocking status logic
@@ -202,14 +223,22 @@ const getMoveInDashboard = async (req, res) => {
 
             const insuranceProvided = !missingItems.includes('Insurance') || dbInsurance;
             
+            const hasBlockingTickets = (mi.unit?.Ticket?.length || 0) > 0;
             let currentStatus = mi.status;
 
             // Transition: Blocked -> Missing Requirements (if unit becomes ACTIVE or is marked ready)
-            if (currentStatus === 'PENDING' || currentStatus === 'BLOCKED_IN_PREPARATION' || currentStatus === 'BLOCKED_IN_CONSTRUCTION') {
+            // MODULE 3/4 RULE: If there are blocking tickets, it STAYS in BLOCKED_IN_PREPARATION
+            if (hasBlockingTickets) {
+                currentStatus = 'BLOCKED_IN_PREPARATION';
+            } else if (currentStatus === 'PENDING' || currentStatus === 'BLOCKED_IN_PREPARATION' || currentStatus === 'BLOCKED_IN_CONSTRUCTION') {
                 if (mi.unit?.unit_status === 'ACTIVE' || mi.unit?.ready_for_leasing || mi.unit?.unit_ready_completed) {
                     currentStatus = 'REQUIREMENTS_PENDING';
                 }
             }
+
+            const inspection = allInspections.find(ins => ins.unitId === mi.unitId && ins.leaseId === mi.leaseId);
+            const hasDraftInspection = inspection && inspection.status === 'DRAFT';
+            const hasCompletedInspection = inspection && inspection.status === 'COMPLETED';
 
             // Transition: Missing Requirements <-> Ready for Move-In
             if (currentStatus === 'REQUIREMENTS_PENDING' || currentStatus === 'READY_FOR_MOVE_IN') {
@@ -222,15 +251,26 @@ const getMoveInDashboard = async (req, res) => {
                 }
             }
 
+            // Transition: Inspection Logic
+            if (currentStatus !== 'OCCUPIED') {
+                if (hasCompletedInspection) {
+                    currentStatus = 'INSPECTION_COMPLETED';
+                } else if (hasDraftInspection) {
+                    currentStatus = 'INSPECTION_IN_PROGRESS';
+                }
+            }
+
             return {
                 ...mi,
                 status: currentStatus,
                 daysRemaining: diffDays,
+                inspectionId: inspection?.id || null,
                 urgency: diffDays < 0 ? 'OVERDUE' : diffDays <= 7 ? 'HIGH' : 'NORMAL',
                 requirements: {
                     rent: rentPaid,
                     deposit: depositStatus, // Now returns 'MISSING', 'PAID', or 'NOT_REQUIRED'
-                    insurance: insuranceProvided
+                    insurance: insuranceProvided,
+                    repairs: !hasBlockingTickets
                 }
             };
         });
@@ -632,26 +672,42 @@ const getInspectionUnits = async (req, res) => {
             },
             include: {
                 leases: {
-                    where: { status: 'Active' },
+                    where: { status: { in: ['Active', 'RESERVED', 'Pending'] } },
                     include: { tenant: true },
-                    take: 1
+                    orderBy: { createdAt: 'desc' }
                 },
                 reserved_by_user: true,
-                property: true
+                property: true,
+                moveIns: {
+                    where: { status: { not: 'CANCELLED' } },
+                    orderBy: { createdAt: 'desc' },
+                    take: 1
+                },
+                moveOuts: {
+                    where: { status: { not: 'CANCELLED' } },
+                    orderBy: { createdAt: 'desc' },
+                    take: 1
+                }
             },
             orderBy: { name: 'asc' }
         });
 
         const data = units.map(u => {
-            const activeLease = u.leases[0];
+            // Priority: Active Lease, then Reserved Lease
+            const activeLease = u.leases.find(l => l.status === 'Active') || u.leases[0];
+            const moveIn = u.moveIns[0];
+            const moveOut = u.moveOuts[0];
+
             return {
                 id: u.id,
                 unitId: u.id,
-                unitNumber: u.name || u.unitNumber,
+                moveInId: moveIn?.id || null,
+                moveOutId: moveOut?.id || null,
+                unitNumber: u.unitNumber || u.name,
                 leaseId: activeLease?.id || null,
-                tenantName: activeLease?.tenant?.name || u.reserved_by_user?.name || 'Vacant / Prospect',
+                tenantName: activeLease?.tenant?.name || activeLease?.tenant?.firstName || u.reserved_by_user?.name || 'Vacant / Prospect',
                 unit: {
-                    unitNumber: u.name || u.unitNumber,
+                    unitNumber: u.unitNumber || u.name,
                     propertyId: u.propertyId,
                     property: u.property
                 },
