@@ -363,8 +363,9 @@ exports.getDashboardStats = async (req, res) => {
 
         const pendingRefundsList = pendingRefundsRaw.filter(inv => {
             const adjustments = inv.tenant?.refundAdjustments || [];
+            // UNIT-AWARE: Only hide if a finished record exists for THIS specific unit
             const hasFinishedOrCancelled = adjustments.some(adj =>
-                ['Completed', 'Issued', 'Cancelled', 'Received'].includes(adj.status)
+                adj.unitId === inv.unitId && ['Completed', 'Issued', 'Cancelled', 'Received'].includes(adj.status)
             );
             return !hasFinishedOrCancelled;
         }).map(inv => ({

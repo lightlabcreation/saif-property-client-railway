@@ -360,7 +360,7 @@ const confirmMoveOut = async (req, res) => {
             where: { id: parseInt(id) },
             data: { 
                 status: visualDate ? 'VISUAL_INSPECTION_SCHEDULED' : 'CONFIRMED',
-                visualDate: visualDate ? new Date(visualDate) : null,
+                visualDate: visualDate ? workflowService.normalizeToNoon(visualDate) : null,
                 visualTime: visualTime || null
             }
         });
@@ -379,7 +379,7 @@ const scheduleFinalInspection = async (req, res) => {
             where: { id: parseInt(id) },
             data: { 
                 status: 'VISUAL_INSPECTION_SCHEDULED', // Moves to Stage 3
-                finalDate: finalDate ? new Date(finalDate) : null,
+                finalDate: finalDate ? workflowService.normalizeToNoon(finalDate) : null,
                 finalTime: finalTime || null
             }
         });
