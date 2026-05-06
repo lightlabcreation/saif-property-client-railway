@@ -324,7 +324,7 @@ const generateInspectionPDF = async (inspection, res) => {
     };
 
     // --- LOGO & HEADER ---
-    const logoPath = 'c:\\Users\\Admin\\Desktop\\property_new_clone\\frontned_property\\public\\assets\\logo.png';
+    const logoPath = 'c:\\Users\\Admin\\Desktop\\property_lightlab\\frontend\\public\\assets\\logo.png';
     try {
         doc.image(logoPath, 40, 35, { width: 100 });
     } catch (e) {
@@ -399,9 +399,12 @@ const generateInspectionPDF = async (inspection, res) => {
 
         roomResponses.forEach((resp, idx) => {
             // Determine response color (Red for deficiency)
-            const isDeficiency = (resp.response || '').toLowerCase().includes('yes') || 
-                                (resp.response || '').toLowerCase().includes('visible') || 
-                                (resp.response || '').toLowerCase().includes('damaged');
+            const respText = (resp.response || '').toLowerCase();
+            const isNegative = respText.includes('no') || respText.includes('none') || respText.includes('not');
+            const hasProblem = respText.includes('yes') || respText.includes('visible') || respText.includes('damaged') || respText.includes('deficient');
+            
+            // Logic: It's a deficiency if it has problem keywords AND doesn't have negative qualifiers (like "No visible")
+            const isDeficiency = hasProblem && !isNegative;
             
             const respColor = isDeficiency ? colors.danger : colors.success;
 
