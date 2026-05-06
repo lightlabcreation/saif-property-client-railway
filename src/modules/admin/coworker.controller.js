@@ -40,6 +40,12 @@ const modulesList = [
     'Sent Emails',
     'Maintenance',
     'Tickets',
+    'Inspections',
+    'Inspection List',
+    'Inspection Templates',
+    'Unit Preparation',
+    'Move-Out',
+    'Move-In',
     'Shuttle',
     'Settings'
 ];

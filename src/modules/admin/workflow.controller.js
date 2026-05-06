@@ -226,9 +226,15 @@ const getMoveInDashboard = async (req, res) => {
             const hasBlockingTickets = (mi.unit?.Ticket?.length || 0) > 0;
             let currentStatus = mi.status;
 
-            // Transition: Blocked -> Missing Requirements (if unit becomes ACTIVE or is marked ready)
+            const isLeaseSigned = mi.leaseId != null && mi.lease?.status !== 'Pending';
+
+            // Transition: Blocked -> Missing Requirements
+            // LEASE GATEKEEPER RULE: If lease is not signed, it stays in Upcoming (PENDING)
+            if (!isLeaseSigned) {
+                currentStatus = 'PENDING';
+            } 
             // MODULE 3/4 RULE: If there are blocking tickets, it STAYS in BLOCKED_IN_PREPARATION
-            if (hasBlockingTickets) {
+            else if (hasBlockingTickets) {
                 currentStatus = 'BLOCKED_IN_PREPARATION';
             } else if (currentStatus === 'PENDING' || currentStatus === 'BLOCKED_IN_PREPARATION' || currentStatus === 'BLOCKED_IN_CONSTRUCTION') {
                 if (mi.unit?.unit_status === 'ACTIVE' || mi.unit?.ready_for_leasing || mi.unit?.unit_ready_completed) {
@@ -356,10 +362,12 @@ const confirmMoveOut = async (req, res) => {
         const { id } = req.params;
         const { visualDate, visualTime } = req.body;
         
+        const existing = await prisma.moveOut.findUnique({ where: { id: parseInt(id) } });
+        
         const moveOut = await prisma.moveOut.update({
             where: { id: parseInt(id) },
             data: { 
-                status: visualDate ? 'VISUAL_INSPECTION_SCHEDULED' : 'CONFIRMED',
+                status: (visualDate || existing.finalDate) ? 'VISUAL_INSPECTION_SCHEDULED' : 'CONFIRMED',
                 visualDate: visualDate ? workflowService.normalizeToNoon(visualDate) : null,
                 visualTime: visualTime || null
             }
@@ -375,10 +383,12 @@ const scheduleFinalInspection = async (req, res) => {
         const { id } = req.params;
         const { finalDate, finalTime } = req.body;
         
+        const existing = await prisma.moveOut.findUnique({ where: { id: parseInt(id) } });
+
         const moveOut = await prisma.moveOut.update({
             where: { id: parseInt(id) },
             data: { 
-                status: 'VISUAL_INSPECTION_SCHEDULED', // Moves to Stage 3
+                status: (finalDate || existing.visualDate) ? 'VISUAL_INSPECTION_SCHEDULED' : 'CONFIRMED',
                 finalDate: finalDate ? workflowService.normalizeToNoon(finalDate) : null,
                 finalTime: finalTime || null
             }
