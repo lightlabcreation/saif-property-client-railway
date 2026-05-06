@@ -397,7 +397,7 @@ const generateInspectionPDF = async (inspection, res) => {
         doc.text('RESPONSE', 400, currentY + 5);
         currentY += 18;
 
-        roomResponses.forEach((resp, idx) => {
+        for (const [idx, resp] of roomResponses.entries()) {
             // Determine response color (Red for deficiency)
             const respText = (resp.response || '').toLowerCase();
             const isNegative = respText.includes('no') || respText.includes('none') || respText.includes('not');
@@ -411,7 +411,23 @@ const generateInspectionPDF = async (inspection, res) => {
             // Calculate height needed for question and notes
             const qHeight = doc.heightOfString(resp.question, { width: 300 });
             const nHeight = resp.notes ? doc.heightOfString(`Notes: ${resp.notes}`, { width: 300 }) : 0;
-            const rowHeight = Math.max(25, qHeight + nHeight + 15);
+            
+            let imgHeight = 0;
+            let imgBuffer = null;
+            const imgWidth = 200;
+
+            if (resp.photoUrl) {
+                try {
+                    const imgRes = await axios.get(resp.photoUrl, { responseType: 'arraybuffer' });
+                    imgBuffer = Buffer.from(imgRes.data, 'binary');
+                    const img = doc.openImage(imgBuffer);
+                    imgHeight = img.height * (imgWidth / img.width) + 15;
+                } catch (err) {
+                    console.error('Photo fetch error:', err.message);
+                }
+            }
+
+            const rowHeight = Math.max(25, qHeight + nHeight + imgHeight + 15);
 
             // Page break check
             if (currentY + rowHeight > 750) {
@@ -438,17 +454,15 @@ const generateInspectionPDF = async (inspection, res) => {
                 doc.fillColor(colors.secondary).fontSize(8).font('Helvetica-Oblique').text(`Notes: ${resp.notes}`, 80, currentY + qHeight + 10, { width: 300 });
             }
 
+            if (imgBuffer) {
+                doc.image(imgBuffer, 80, currentY + qHeight + nHeight + 12, { width: imgWidth });
+            }
+
             doc.fillColor(respColor).font('Helvetica-Bold').fontSize(9).text((resp.response || 'N/A').toUpperCase(), 400, currentY + 7, { width: 140 });
 
             currentY += rowHeight;
             doc.moveTo(40, currentY).lineTo(555, currentY).strokeColor(colors.border).lineWidth(0.5).stroke();
-
-            // Handle Images if they exist
-            if (resp.photoUrl) {
-                // To keep it clean, we might want to group images or put them after the table
-                // For now, let's keep them here but check space
-            }
-        });
+        }
         currentY += 15;
     }
 
@@ -517,41 +531,9 @@ const generateInspectionPDF = async (inspection, res) => {
         }
     }
 
-    // --- IMAGES APPENDIX (Optional but cleaner) ---
-    const mediaResponses = responses.filter(r => r.photoUrl);
-    if (mediaResponses.length > 0) {
-        doc.addPage();
-        doc.fillColor(colors.headerBg).rect(40, 40, 515, 20).fill();
-        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10).text('PHOTO EVIDENCE APPENDIX', 50, 45);
-        
-        let imgX = 50;
-        let imgY = 80;
-        const imgSize = 240;
-
-        for (const resp of mediaResponses) {
-            if (imgY + imgSize > 750) {
-                doc.addPage();
-                imgY = 50;
-            }
-
-            try {
-                const response = await axios.get(resp.photoUrl, { responseType: 'arraybuffer' });
-                const buffer = Buffer.from(response.data, 'binary');
-                
-                doc.image(buffer, imgX, imgY, { width: imgSize });
-                doc.fillColor(colors.text).fontSize(8).font('Helvetica-Bold').text(resp.question, imgX, imgY + doc.openImage(buffer).height * (imgSize / doc.openImage(buffer).width) + 5, { width: imgSize });
-                
-                // Two images per row logic or just one per row for clarity?
-                // Let's do one per row for high quality
-                imgY += doc.openImage(buffer).height * (imgSize / doc.openImage(buffer).width) + 40;
-            } catch (err) {
-                console.error('Appendix photo error:', err.message);
-            }
-        }
-    }
-
     doc.end();
 };
+
 
 module.exports = {
     generateInvoicePDF,
