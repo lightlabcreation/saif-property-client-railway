@@ -301,7 +301,7 @@ const generateDashboardPDF = (title, data, res) => {
  */
 const generateInspectionPDF = async (inspection, res) => {
     const doc = new PDFDocument({
-        margin: 50,
+        margin: 40,
         size: 'A4',
         bufferPages: true
     });
@@ -312,127 +312,239 @@ const generateInspectionPDF = async (inspection, res) => {
     doc.pipe(res);
 
     const colors = {
-        primary: '#4f46e5',
+        primary: '#000000',
         secondary: '#64748b',
         text: '#1e293b',
         border: '#e2e8f0',
-        success: '#10b981'
+        success: '#10b981',
+        danger: '#ef4444',
+        headerBg: '#000000',
+        rowAlt: '#f8fafc',
+        tableHeader: '#e2e8f0'
     };
 
-    // Header
-    doc.fontSize(20).fillColor(colors.primary).font('Helvetica-Bold').text('INSPECTION REPORT', { align: 'center' });
-    doc.moveDown();
-
-    // Basic Info
-    doc.fontSize(10).fillColor(colors.secondary).font('Helvetica-Bold').text('INSPECTION DETAILS');
-    doc.moveTo(50, doc.y + 5).lineTo(550, doc.y + 5).strokeColor(colors.border).stroke();
-    doc.moveDown();
-
-    let startY = doc.y;
-    doc.fillColor(colors.text).font('Helvetica').text(`ID: INSP-${inspection.id.toString().padStart(5, '0')}`, 50, startY);
-    doc.text(`Type: ${inspection.template?.name || 'N/A'}`, 50, startY + 15);
-    doc.text(`Status: ${inspection.status}`, 50, startY + 30);
-    doc.text(`Date: ${new Date(inspection.createdAt).toLocaleDateString()}`, 300, startY);
-    doc.text(`Inspector: ${inspection.inspector?.name || 'N/A'}`, 300, startY + 15);
-    doc.moveDown(3);
-
-    // Location & Tenant
-    doc.fontSize(10).fillColor(colors.secondary).font('Helvetica-Bold').text('LOCATION & TENANT');
-    doc.moveTo(50, doc.y + 5).lineTo(550, doc.y + 5).strokeColor(colors.border).stroke();
-    doc.moveDown();
-
-    startY = doc.y;
-    doc.fillColor(colors.text).font('Helvetica').text(`Unit: ${inspection.unit?.name || 'N/A'}`, 50, startY);
-    doc.text(`Property: ${inspection.unit?.property?.name || 'N/A'}`, 50, startY + 15);
-    doc.text(`Tenant: ${inspection.lease?.tenant?.name || 'N/A'}`, 300, startY);
-    doc.moveDown(3);
-
-    // Responses
-    doc.fontSize(10).fillColor(colors.secondary).font('Helvetica-Bold').text('INSPECTION RESPONSES');
-    doc.moveTo(50, doc.y + 5).lineTo(550, doc.y + 5).strokeColor(colors.border).stroke();
-    doc.moveDown();
-
-    if (inspection.responses && inspection.responses.length > 0) {
-        for (const [index, resp] of inspection.responses.entries()) {
-            // Check for page break (approximate space needed for text + image)
-            if (doc.y > 650) doc.addPage();
-
-            doc.fillColor(colors.text).font('Helvetica-Bold').fontSize(11).text(`${index + 1}. ${resp.question || 'Observation'}`);
-            doc.font('Helvetica').fontSize(10).text(`Response: ${resp.response || 'N/A'}`, { indent: 20 });
-            
-            if (resp.notes) {
-                doc.fillColor(colors.secondary).font('Helvetica-Oblique').fontSize(9).text(`Notes: ${resp.notes}`, { indent: 20 });
-            }
-
-            if (resp.photoUrl) {
-                try {
-                    const response = await axios.get(resp.photoUrl, { responseType: 'arraybuffer' });
-                    const buffer = Buffer.from(response.data, 'binary');
-                    
-                    doc.moveDown(1);
-                    const imageWidth = 300;
-                    const xPos = (doc.page.width - imageWidth) / 2;
-                    
-                    // Get image height to update doc.y correctly
-                    const img = doc.openImage(buffer);
-                    const scaledHeight = img.height * (imageWidth / img.width);
-                    
-                    // Check if image fits on current page
-                    if (doc.y + scaledHeight > 750) {
-                        doc.addPage();
-                    }
-
-                    doc.image(buffer, xPos, doc.y, { width: imageWidth });
-                    doc.y += scaledHeight + 15; // Move Y down by image height plus margin
-                } catch (err) {
-                    console.error('Failed to fetch photo for PDF:', resp.photoUrl);
-                    doc.moveDown(1);
-                }
-            }
-
-            doc.moveDown(1);
-            doc.moveTo(50, doc.y).lineTo(550, doc.y).strokeColor(colors.border).lineWidth(0.5).stroke();
-            doc.moveDown(1.5);
-        }
-    } else {
-        doc.text('No responses recorded.');
+    // --- LOGO & HEADER ---
+    const logoPath = 'c:\\Users\\Admin\\Desktop\\property_new_clone\\frontned_property\\public\\assets\\logo.png';
+    try {
+        doc.image(logoPath, 40, 35, { width: 100 });
+    } catch (e) {
+        doc.fontSize(18).fillColor(colors.primary).font('Helvetica-Bold').text('PROPERTY LIGHTLAB', 40, 40);
     }
 
-    // Signature
+    doc.fontSize(16).fillColor(colors.primary).font('Helvetica-Bold').text('INSPECTION REPORT', 160, 40, { align: 'right' });
+    doc.fontSize(10).fillColor(colors.secondary).font('Helvetica').text(`Generated: ${new Date().toLocaleDateString()}`, 160, 60, { align: 'right' });
+
+    doc.moveTo(40, 85).lineTo(555, 85).strokeColor(colors.border).lineWidth(1).stroke();
+
+    // --- GENERAL INFORMATION ---
+    let currentY = 100;
+    doc.fillColor(colors.headerBg).rect(40, currentY, 515, 20).fill();
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10).text('GENERAL INFORMATION', 50, currentY + 5);
+    currentY += 25;
+
+    const drawInfoRow = (label, value, x, y) => {
+        doc.fillColor(colors.secondary).font('Helvetica-Bold').fontSize(8).text(label.toUpperCase(), x, y);
+        doc.fillColor(colors.text).font('Helvetica').fontSize(9).text(value || 'N/A', x, y + 10);
+    };
+
+    drawInfoRow('Inspection ID', `INSP-${inspection.id.toString().padStart(5, '0')}`, 50, currentY);
+    drawInfoRow('Type', inspection.template?.name, 180, currentY);
+    drawInfoRow('Status', inspection.status, 310, currentY);
+    drawInfoRow('Date', new Date(inspection.createdAt).toLocaleDateString(), 440, currentY);
+
+    currentY += 30;
+    drawInfoRow('Property', inspection.unit?.property?.name, 50, currentY);
+    drawInfoRow('Unit', inspection.unit?.name, 180, currentY);
+    drawInfoRow('Tenant', inspection.lease?.tenant?.name, 310, currentY);
+    drawInfoRow('Inspector', inspection.inspector?.name, 440, currentY);
+
+    currentY += 45;
+
+    // --- INSPECTION RESPONSES ---
+    // Group responses by "Room" if available from template structure, else group by current grouping logic
+    const responses = inspection.responses || [];
+    
+    // We try to group them by looking at the template structure rooms
+    const rooms = inspection.template?.structure?.rooms || [{ name: 'Inspection Items', questions: [] }];
+    
+    for (const room of rooms) {
+        // Find responses belonging to this room
+        const roomResponses = responses.filter(r => {
+            if (room.questions) {
+                return room.questions.some(q => q.text === r.question);
+            }
+            return true; // Fallback for unstructured
+        });
+
+        if (roomResponses.length === 0 && rooms.length > 1) continue;
+
+        // Check for page break
+        if (currentY > 700) {
+            doc.addPage();
+            currentY = 50;
+        }
+
+        // Room Header
+        doc.fillColor(colors.headerBg).rect(40, currentY, 515, 20).fill();
+        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10).text(room.name.toUpperCase(), 50, currentY + 5);
+        currentY += 20;
+
+        // Table Header
+        doc.fillColor(colors.tableHeader).rect(40, currentY, 515, 18).fill();
+        doc.fillColor(colors.secondary).font('Helvetica-Bold').fontSize(8);
+        doc.text('Q#', 50, currentY + 5);
+        doc.text('QUESTION / ITEM', 80, currentY + 5);
+        doc.text('RESPONSE', 400, currentY + 5);
+        currentY += 18;
+
+        roomResponses.forEach((resp, idx) => {
+            // Determine response color (Red for deficiency)
+            const isDeficiency = (resp.response || '').toLowerCase().includes('yes') || 
+                                (resp.response || '').toLowerCase().includes('visible') || 
+                                (resp.response || '').toLowerCase().includes('damaged');
+            
+            const respColor = isDeficiency ? colors.danger : colors.success;
+
+            // Calculate height needed for question and notes
+            const qHeight = doc.heightOfString(resp.question, { width: 300 });
+            const nHeight = resp.notes ? doc.heightOfString(`Notes: ${resp.notes}`, { width: 300 }) : 0;
+            const rowHeight = Math.max(25, qHeight + nHeight + 15);
+
+            // Page break check
+            if (currentY + rowHeight > 750) {
+                doc.addPage();
+                currentY = 50;
+                // Re-draw table header on new page
+                doc.fillColor(colors.tableHeader).rect(40, currentY, 515, 18).fill();
+                doc.fillColor(colors.secondary).font('Helvetica-Bold').fontSize(8);
+                doc.text('Q#', 50, currentY + 5);
+                doc.text('QUESTION / ITEM', 80, currentY + 5);
+                doc.text('RESPONSE', 400, currentY + 5);
+                currentY += 18;
+            }
+
+            // Zebra striping
+            if (idx % 2 === 0) {
+                doc.fillColor(colors.rowAlt).rect(40, currentY, 515, rowHeight).fill();
+            }
+
+            doc.fillColor(colors.text).font('Helvetica').fontSize(9).text(`${idx + 1}`, 50, currentY + 7);
+            doc.text(resp.question, 80, currentY + 7, { width: 300 });
+            
+            if (resp.notes) {
+                doc.fillColor(colors.secondary).fontSize(8).font('Helvetica-Oblique').text(`Notes: ${resp.notes}`, 80, currentY + qHeight + 10, { width: 300 });
+            }
+
+            doc.fillColor(respColor).font('Helvetica-Bold').fontSize(9).text((resp.response || 'N/A').toUpperCase(), 400, currentY + 7, { width: 140 });
+
+            currentY += rowHeight;
+            doc.moveTo(40, currentY).lineTo(555, currentY).strokeColor(colors.border).lineWidth(0.5).stroke();
+
+            // Handle Images if they exist
+            if (resp.photoUrl) {
+                // To keep it clean, we might want to group images or put them after the table
+                // For now, let's keep them here but check space
+            }
+        });
+        currentY += 15;
+    }
+
+    // --- TICKETS SECTION ---
+    if (inspection.tickets && inspection.tickets.length > 0) {
+        if (currentY > 650) {
+            doc.addPage();
+            currentY = 50;
+        }
+
+        doc.fillColor('#ef4444').rect(40, currentY, 515, 20).fill();
+        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10).text('ACTION PLANS / TICKETS', 50, currentY + 5);
+        currentY += 25;
+
+        inspection.tickets.forEach((ticket, idx) => {
+            if (currentY > 750) {
+                doc.addPage();
+                currentY = 50;
+            }
+
+            doc.fillColor(colors.text).font('Helvetica-Bold').fontSize(9).text(`${idx + 1}. ${ticket.subject}`, 50, currentY);
+            doc.fillColor(colors.secondary).font('Helvetica').fontSize(8).text(ticket.description || 'No description', 60, currentY + 12, { width: 480 });
+            
+            const priorityColor = ticket.priority === 'High' ? '#ef4444' : '#f59e0b';
+            doc.fillColor(priorityColor).font('Helvetica-Bold').text(`Priority: ${ticket.priority}`, 450, currentY, { align: 'right', width: 90 });
+            
+            currentY += 35;
+            doc.moveTo(50, currentY - 5).lineTo(550, currentY - 5).strokeColor(colors.border).lineWidth(0.5).stroke();
+        });
+    }
+
+    // --- SIGNATURES ---
     if (inspection.tenantSignature || inspection.inspectorSignature) {
-        if (doc.y > 550) doc.addPage();
+        if (currentY > 600) {
+            doc.addPage();
+            currentY = 50;
+        }
         
-        doc.moveDown(2);
-        doc.fontSize(10).fillColor(colors.secondary).font('Helvetica-Bold').text('SIGNATURES');
-        doc.moveTo(50, doc.y + 5).lineTo(550, doc.y + 5).strokeColor(colors.border).stroke();
-        doc.moveDown(1.5);
-        
-        const sigWidth = 180;
-        const startY = doc.y;
+        currentY += 30;
+        doc.moveTo(40, currentY).lineTo(555, currentY).strokeColor(colors.border).lineWidth(1).stroke();
+        currentY += 20;
+
+        const sigWidth = 150;
+        const sigHeight = 60;
 
         // Tenant Signature
         if (inspection.tenantSignature) {
-            doc.fillColor(colors.text).font('Helvetica-Bold').fontSize(10).text('Tenant Signature:', 50, startY);
+            doc.fillColor(colors.text).font('Helvetica-Bold').fontSize(10).text('TENANT SIGNATURE', 50, currentY);
             try {
-                doc.image(inspection.tenantSignature, 50, startY + 20, { width: sigWidth });
-                doc.fontSize(8).fillColor(colors.secondary).text(`Signed by: ${inspection.lease?.tenant?.name || 'Tenant'}`, 50, startY + 90);
+                doc.image(inspection.tenantSignature, 50, currentY + 15, { width: sigWidth, height: sigHeight });
+                doc.fontSize(8).fillColor(colors.secondary).text(`Signed by: ${inspection.lease?.tenant?.name || 'Tenant'}`, 50, currentY + 15 + sigHeight + 5);
             } catch (e) {
-                doc.fontSize(8).fillColor('red').text('Error rendering tenant signature.', 50, startY + 40);
+                doc.rect(50, currentY + 15, sigWidth, sigHeight).stroke();
             }
         }
 
         // Inspector Signature
         if (inspection.inspectorSignature) {
-            doc.fillColor(colors.text).font('Helvetica-Bold').fontSize(10).text('Inspector Signature:', 320, startY);
+            doc.fillColor(colors.text).font('Helvetica-Bold').fontSize(10).text('INSPECTOR SIGNATURE', 350, currentY);
             try {
-                doc.image(inspection.inspectorSignature, 320, startY + 20, { width: sigWidth });
-                doc.fontSize(8).fillColor(colors.secondary).text(`Signed by: ${inspection.inspector?.name || 'Inspector'}`, 320, startY + 90);
+                doc.image(inspection.inspectorSignature, 350, currentY + 15, { width: sigWidth, height: sigHeight });
+                doc.fontSize(8).fillColor(colors.secondary).text(`Signed by: ${inspection.inspector?.name || 'Inspector'}`, 350, currentY + 15 + sigHeight + 5);
             } catch (e) {
-                doc.fontSize(8).fillColor('red').text('Error rendering inspector signature.', 320, startY + 40);
+                doc.rect(350, currentY + 15, sigWidth, sigHeight).stroke();
             }
         }
+    }
+
+    // --- IMAGES APPENDIX (Optional but cleaner) ---
+    const mediaResponses = responses.filter(r => r.photoUrl);
+    if (mediaResponses.length > 0) {
+        doc.addPage();
+        doc.fillColor(colors.headerBg).rect(40, 40, 515, 20).fill();
+        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10).text('PHOTO EVIDENCE APPENDIX', 50, 45);
         
-        doc.y = Math.max(doc.y, startY + 110);
+        let imgX = 50;
+        let imgY = 80;
+        const imgSize = 240;
+
+        for (const resp of mediaResponses) {
+            if (imgY + imgSize > 750) {
+                doc.addPage();
+                imgY = 50;
+            }
+
+            try {
+                const response = await axios.get(resp.photoUrl, { responseType: 'arraybuffer' });
+                const buffer = Buffer.from(response.data, 'binary');
+                
+                doc.image(buffer, imgX, imgY, { width: imgSize });
+                doc.fillColor(colors.text).fontSize(8).font('Helvetica-Bold').text(resp.question, imgX, imgY + doc.openImage(buffer).height * (imgSize / doc.openImage(buffer).width) + 5, { width: imgSize });
+                
+                // Two images per row logic or just one per row for clarity?
+                // Let's do one per row for high quality
+                imgY += doc.openImage(buffer).height * (imgSize / doc.openImage(buffer).width) + 40;
+            } catch (err) {
+                console.error('Appendix photo error:', err.message);
+            }
+        }
     }
 
     doc.end();
