@@ -131,7 +131,7 @@ const createInspection = async (req, res) => {
                     }
                 }
 
-                await prisma.$executeRawUnsafe(`UPDATE MoveOut SET status = '${newStatus}', ${column} = ${inspection.id}, ${dateColumn} = ${dateUpdateStr}, ${timeColumn} = ${time ? `'${time}'` : 'NULL'} WHERE id = ${moveOut.id}`);
+                await prisma.$executeRawUnsafe(`UPDATE moveout SET status = '${newStatus}', ${column} = ${inspection.id}, ${dateColumn} = ${dateUpdateStr}, ${timeColumn} = ${time ? `'${time}'` : 'NULL'} WHERE id = ${moveOut.id}`);
             }
         }
 
@@ -420,7 +420,7 @@ const getInspectionDetails = async (req, res) => {
 
                 if (moveOut) {
                     if (moveOut.visualInspectionId && moveOut.finalInspectionId) {
-                        await prisma.$executeRaw`UPDATE MoveOut SET status = 'INSPECTION_IN_PROGRESS' WHERE id = ${moveOut.id}`;
+                        await prisma.$executeRaw`UPDATE moveout SET status = 'INSPECTION_IN_PROGRESS' WHERE id = ${moveOut.id}`;
                     }
                 }
             } catch (workflowErr) {

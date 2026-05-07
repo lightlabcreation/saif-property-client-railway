@@ -63,7 +63,7 @@ const getMoveOutDashboard = async (req, res) => {
             console.error('MOVE_OUT_FETCH_ERROR: Likely invalid enum value. Attempting auto-repair...', fetchError.message);
             
             // AUTO-REPAIR: Force all empty or invalid statuses to PENDING
-            await prisma.$executeRaw`UPDATE MoveOut SET status = 'PENDING' WHERE status = '' OR status IS NULL`;
+            await prisma.$executeRaw`UPDATE moveout SET status = 'PENDING' WHERE status = '' OR status IS NULL`;
             
             // Retry the fetch once
             moveOuts = await prisma.moveOut.findMany({
@@ -108,7 +108,7 @@ const getMoveOutDashboard = async (req, res) => {
             }
 
             if (updated) {
-                await prisma.$executeRawUnsafe(`UPDATE MoveOut SET visualInspectionId = ${visualId || 'NULL'}, finalInspectionId = ${finalId || 'NULL'} WHERE id = ${mo.id}`);
+                await prisma.$executeRawUnsafe(`UPDATE moveout SET visualInspectionId = ${visualId || 'NULL'}, finalInspectionId = ${finalId || 'NULL'} WHERE id = ${mo.id}`);
                 // Update local object so stats/UI reflect the fix immediately
                 mo.visualInspectionId = visualId;
                 mo.finalInspectionId = finalId;
@@ -167,7 +167,6 @@ const getMoveInDashboard = async (req, res) => {
                         } 
                     } 
                 },
-                overrideUser: { select: { id: true, name: true } },
                 overrideUser: { select: { id: true, name: true } }
             },
             orderBy: { targetDate: 'asc' }
