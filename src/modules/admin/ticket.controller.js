@@ -17,7 +17,8 @@ exports.getAllTickets = async (req, res) => {
             include: {
                 user: true,
                 unit: { include: { property: true } },
-                property: true
+                property: true,
+                inspection: { include: { inspector: true } }
             },
             orderBy: { createdAt: 'desc' }
         });
@@ -34,6 +35,8 @@ exports.getAllTickets = async (req, res) => {
                 id: `T-${t.id + 1000}`,
                 dbId: t.id,
                 tenant: t.user.name || 'Unknown',
+                userRole: t.user.role,
+                inspectorName: t.inspection?.inspector?.name || 'N/A',
                 unit: unitInfo,
                 subject: t.subject,
                 category: t.category,
