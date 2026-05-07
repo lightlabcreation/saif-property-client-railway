@@ -29,10 +29,7 @@ exports.getReports = async (req, res) => {
 
         // Occupancy Rate - Filter out INACTIVE (In Construction) units
         const unitFilter = {
-            OR: [
-                { unit_status: 'ACTIVE' },
-                { unit_status: null }
-            ]
+            unit_status: 'ACTIVE'
         };
         const totalUnits = await prisma.unit.count({ where: unitFilter });
         const occupiedUnits = await prisma.unit.count({ 
@@ -175,7 +172,6 @@ exports.getRentRoll = async (req, res) => {
                 where: {
                     OR: [
                         { unit_status: 'ACTIVE' },
-                        { unit_status: { equals: undefined } },
                         { reserved_flag: true },
                         { bedroomsList: { some: { reserved_flag: true } } }
                     ]
