@@ -1,5 +1,6 @@
 const PDFDocument = require('pdfkit');
 const axios = require('axios');
+const path = require('path');
 
 /**
  * Generates an Invoice PDF
@@ -37,7 +38,7 @@ const generateInvoicePDF = (invoice, res, settings = {}) => {
     };
 
     // --- HEADER SECTION ---
-    const logoPath = 'c:\\Users\\Admin\\Desktop\\property_new_clone\\frontned_property\\public\\assets\\logo.png';
+    const logoPath = path.join(__dirname, '..', 'assets', 'logo.png');
     try {
         doc.image(logoPath, 50, 45, { width: 140 });
         // Precise masking of the sub-text area under the "MASTEKO" name
@@ -324,11 +325,11 @@ const generateInspectionPDF = async (inspection, res) => {
     };
 
     // --- LOGO & HEADER ---
-    const logoPath = 'c:\\Users\\Admin\\Desktop\\property_lightlab\\frontend\\public\\assets\\logo.png';
+    const logoPath = path.join(__dirname, '..', 'assets', 'logo.png');
     try {
         doc.image(logoPath, 40, 35, { width: 100 });
     } catch (e) {
-        doc.fontSize(18).fillColor(colors.primary).font('Helvetica-Bold').text('PROPERTY LIGHTLAB', 40, 40);
+        console.error('Logo not found:', logoPath);
     }
 
     doc.fontSize(16).fillColor(colors.primary).font('Helvetica-Bold').text('INSPECTION REPORT', 160, 40, { align: 'right' });
