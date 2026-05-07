@@ -342,21 +342,21 @@ const generateInspectionPDF = async (inspection, res) => {
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10).text('GENERAL INFORMATION', 50, currentY + 5);
     currentY += 25;
 
-    const drawInfoRow = (label, value, x, y) => {
+    const drawInfoRow = (label, value, x, y, width = 100) => {
         doc.fillColor(colors.secondary).font('Helvetica-Bold').fontSize(8).text(label.toUpperCase(), x, y);
-        doc.fillColor(colors.text).font('Helvetica').fontSize(9).text(value || 'N/A', x, y + 10);
+        doc.fillColor(colors.text).font('Helvetica').fontSize(9).text(value || 'N/A', x, y + 10, { width, lineGap: 2 });
     };
 
-    drawInfoRow('Inspection ID', `INSP-${inspection.id.toString().padStart(5, '0')}`, 50, currentY);
-    drawInfoRow('Type', inspection.template?.name, 180, currentY);
-    drawInfoRow('Status', inspection.status, 310, currentY);
-    drawInfoRow('Date', new Date(inspection.createdAt).toLocaleDateString(), 440, currentY);
+    drawInfoRow('Inspection ID', `INSP-${inspection.id.toString().padStart(5, '0')}`, 50, currentY, 80);
+    drawInfoRow('Type', inspection.template?.name, 140, currentY, 200);
+    drawInfoRow('Status', inspection.status, 350, currentY, 80);
+    drawInfoRow('Date', new Date(inspection.createdAt).toLocaleDateString(), 450, currentY, 80);
 
-    currentY += 30;
-    drawInfoRow('Property', inspection.unit?.property?.name, 50, currentY);
-    drawInfoRow('Unit', inspection.unit?.name, 180, currentY);
-    drawInfoRow('Tenant', inspection.lease?.tenant?.name, 310, currentY);
-    drawInfoRow('Inspector', inspection.inspector?.name, 440, currentY);
+    currentY += 35;
+    drawInfoRow('Property', inspection.unit?.property?.name, 50, currentY, 80);
+    drawInfoRow('Unit', inspection.unit?.name, 140, currentY, 200);
+    drawInfoRow('Tenant', inspection.lease?.tenant?.name, 350, currentY, 80);
+    drawInfoRow('Inspector', inspection.inspector?.name, 450, currentY, 80);
 
     currentY += 45;
 
