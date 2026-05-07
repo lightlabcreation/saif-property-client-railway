@@ -170,7 +170,7 @@ const submitInspection = async (req, res) => {
                 const photos = resp.photos || (resp.photo ? [resp.photo] : []);
                 const uploadedUrls = [];
 
-                for (let photoData of photos) {
+                for (const photoData of photos) {
                     if (photoData.startsWith('data:image')) {
                         try {
                             const url = await uploadBase64ToCloudinary(photoData, 'inspection_photos');
@@ -305,6 +305,9 @@ const updateInspection = async (req, res) => {
          if (signature !== undefined) {
             updates.tenantSignature = signature;
         }
+        if (req.body.status !== undefined) {
+            updates.status = req.body.status;
+        }
         if (req.body.inspectorSignature !== undefined) {
             updates.inspectorSignature = req.body.inspectorSignature;
         }
@@ -316,6 +319,29 @@ const updateInspection = async (req, res) => {
                     where: { id: parseInt(id) },
                     data: updates
                 });
+
+                // If cancelled, reset the Move-Out workflow
+                if (updates.status === 'CANCELLED') {
+                    const inspection = await tx.inspection.findUnique({
+                        where: { id: parseInt(id) },
+                        include: { template: true }
+                    });
+
+                    if (inspection && inspection.leaseId && (inspection.template?.type === 'MOVE_OUT' || inspection.template?.type === 'VISUAL')) {
+                        await tx.moveOut.updateMany({
+                            where: { leaseId: inspection.leaseId },
+                            data: {
+                                status: 'CONFIRMED',
+                                visualDate: null,
+                                visualTime: null,
+                                finalDate: null,
+                                finalTime: null,
+                                visualInspectionId: null,
+                                finalInspectionId: null
+                            }
+                        });
+                    }
+                }
             }
 
             // Update responses and log changes
@@ -562,10 +588,33 @@ const deleteInspection = async (req, res) => {
         const { id } = req.params;
 
         await prisma.$transaction(async (tx) => {
+            // Get inspection details first to identify lease/template
+            const inspection = await tx.inspection.findUnique({
+                where: { id: parseInt(id) },
+                include: { template: true }
+            });
+
             // Delete responses
             await tx.inspectionItemResponse.deleteMany({ where: { inspectionId: parseInt(id) } });
-            // Delete inspection
+            
+            // Delete the inspection
             await tx.inspection.delete({ where: { id: parseInt(id) } });
+
+            // WORKFLOW RESET: If it was a Move-Out related inspection, reset the workflow
+            if (inspection && inspection.leaseId && (inspection.template?.type === 'MOVE_OUT' || inspection.template?.type === 'VISUAL')) {
+                await tx.moveOut.updateMany({
+                    where: { leaseId: inspection.leaseId },
+                    data: {
+                        status: 'CONFIRMED',
+                        visualDate: null,
+                        visualTime: null,
+                        finalDate: null,
+                        finalTime: null,
+                        visualInspectionId: null,
+                        finalInspectionId: null
+                    }
+                });
+            }
         });
 
         res.json({ success: true, message: 'Inspection deleted successfully' });
