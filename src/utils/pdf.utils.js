@@ -325,20 +325,23 @@ const generateInspectionPDF = async (inspection, res) => {
     };
 
     // --- LOGO & HEADER ---
-    const logoPath = path.join(__dirname, '..', 'assets', 'logo.png');
+    const logoPath = path.join(__dirname, '..', 'assets', 'image.png');
     try {
-        doc.image(logoPath, 40, 35, { width: 100 });
+        doc.image(logoPath, 40, 30, { width: 130 });
     } catch (e) {
         console.error('Logo not found:', logoPath);
     }
 
-    doc.fontSize(16).fillColor(colors.primary).font('Helvetica-Bold').text('INSPECTION REPORT', 160, 40, { align: 'right' });
+    const reportType = (inspection.template?.type || 'VISUAL').replace('_', ' ');
+    const title = `${reportType} INSPECTION REPORT`.toUpperCase();
+
+    doc.fontSize(16).fillColor(colors.primary).font('Helvetica-Bold').text(title, 160, 40, { align: 'right' });
     doc.fontSize(10).fillColor(colors.secondary).font('Helvetica').text(`Generated: ${new Date().toLocaleDateString()}`, 160, 60, { align: 'right' });
 
-    doc.moveTo(40, 85).lineTo(555, 85).strokeColor(colors.border).lineWidth(1).stroke();
+    doc.moveTo(40, 135).lineTo(555, 135).strokeColor(colors.border).lineWidth(1).stroke();
 
     // --- GENERAL INFORMATION ---
-    let currentY = 100;
+    let currentY = 150;
     doc.fillColor(colors.headerBg).rect(40, currentY, 515, 20).fill();
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10).text('GENERAL INFORMATION', 50, currentY + 5);
     currentY += 25;
