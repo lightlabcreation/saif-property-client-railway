@@ -442,7 +442,7 @@ const createTicket = async (req, res) => {
 
         const inspection = await prisma.inspection.findUnique({
             where: { id: parseInt(id) },
-            include: { unit: true, template: true }
+            include: { unit: true, template: true, lease: true }
         });
 
         if (!inspection) return res.status(404).json({ success: false, message: 'Inspection not found' });
@@ -452,7 +452,7 @@ const createTicket = async (req, res) => {
             // 1. Create Ticket (Removed 'Maintenance' from logic if any, but mainly pre-filling subject)
             ticket = await prisma.ticket.create({
                 data: {
-                    userId: inspection.inspectorId,
+                    userId: inspection.lease?.tenantId || inspection.inspectorId || 1,
                     propertyId: inspection.unit?.propertyId,
                     unitId: inspection.unitId,
                     subject: response ? `${questionText}: ${response}` : questionText,
