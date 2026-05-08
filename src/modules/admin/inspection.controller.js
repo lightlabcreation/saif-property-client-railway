@@ -348,11 +348,40 @@ const updateInspection = async (req, res) => {
             if (responses && responses.length > 0) {
                 for (const resp of responses) {
                     const oldResp = existing.responses.find(r => r.id === resp.id);
+                    
+                    // PHOTO HANDLING IN EDIT MODE
+                    const photos = resp.photos || (resp.photo ? [resp.photo] : []);
+                    const uploadedUrls = [];
+                    let photoChanged = false;
+
+                    for (const photoData of photos) {
+                        if (photoData.startsWith('data:image')) {
+                            try {
+                                const url = await uploadBase64ToCloudinary(photoData, 'inspection_photos');
+                                uploadedUrls.push(url);
+                                photoChanged = true;
+                            } catch (uploadErr) {
+                                console.error('Cloudinary upload failed during update:', uploadErr.message);
+                            }
+                        } else if (photoData.startsWith('http')) {
+                            uploadedUrls.push(photoData);
+                        }
+                    }
+
+                    const primaryPhoto = uploadedUrls[0] || null;
+
                     if (oldResp) {
                         const changes = [];
                         if (resp.response !== oldResp.response) changes.push(`Response: ${oldResp.response} -> ${resp.response}`);
                         if (resp.notes !== oldResp.notes) changes.push(`Notes changed`);
                         if (resp.annotation !== oldResp.annotation) changes.push(`Annotation changed`);
+
+                        // Check if photos array actually changed
+                        const oldMediaUrls = oldResp.media?.map(m => m.url) || (oldResp.photoUrl ? [oldResp.photoUrl] : []);
+                        if (uploadedUrls.length !== oldMediaUrls.length || !uploadedUrls.every(url => oldMediaUrls.includes(url))) {
+                            photoChanged = true;
+                            changes.push('Photos updated');
+                        }
 
                         if (changes.length > 0) {
                             auditLogs.push({
@@ -368,10 +397,52 @@ const updateInspection = async (req, res) => {
                                 data: {
                                     response: resp.response,
                                     notes: resp.notes,
-                                    annotation: resp.annotation
+                                    annotation: resp.annotation,
+                                    photoUrl: primaryPhoto
                                 }
                             });
+
+                            if (photoChanged) {
+                                await tx.inspectionMedia.deleteMany({ where: { responseId: resp.id } });
+                                if (uploadedUrls.length > 0) {
+                                    await tx.inspectionMedia.createMany({
+                                        data: uploadedUrls.map(url => ({
+                                            responseId: resp.id,
+                                            url: url
+                                        }))
+                                    });
+                                }
+                            }
                         }
+                    } else {
+                        // CREATE new response if it didn't exist before
+                        const newResp = await tx.inspectionItemResponse.create({
+                            data: {
+                                inspectionId: parseInt(id),
+                                question: resp.question || 'Unknown',
+                                response: resp.response,
+                                notes: resp.notes,
+                                annotation: resp.annotation,
+                                photoUrl: primaryPhoto
+                            }
+                        });
+
+                        if (uploadedUrls.length > 0) {
+                            await tx.inspectionMedia.createMany({
+                                data: uploadedUrls.map(url => ({
+                                    responseId: newResp.id,
+                                    url: url
+                                }))
+                            });
+                        }
+
+                        auditLogs.push({
+                            userId,
+                            action: 'CREATE_RESPONSE',
+                            entity: 'InspectionItemResponse',
+                            entityId: newResp.id,
+                            details: `New response added during edit: ${resp.response}`
+                        });
                     }
                 }
             }
