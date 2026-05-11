@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const workflowController = require('./workflow.controller');
 const inspectionController = require('./inspection.controller');
-const { authorize } = require('../../middlewares/auth.middleware');
+const { authorize, authenticate } = require('../../middlewares/auth.middleware');
+const { checkPermission } = require('../../middlewares/permission.middleware');
 
 // Move-In / Move-Out Dashboard Routes
 router.get('/units', workflowController.getInspectionUnits);
@@ -10,19 +11,19 @@ router.get('/move-in', workflowController.getMoveInDashboard);
 router.get('/move-in/export', workflowController.exportMoveInPDF);
 router.get('/move-out', workflowController.getMoveOutDashboard);
 router.get('/move-out/export', workflowController.exportMoveOutPDF);
-router.post('/move-out/:id/approve', authorize('ADMIN', 'OWNER'), workflowController.approveMoveOut);
-router.put('/move-out/:id/confirm', authorize('ADMIN', 'OWNER'), workflowController.confirmMoveOut);
-router.put('/move-out/:id/schedule-final', authorize('ADMIN', 'OWNER'), workflowController.scheduleFinalInspection);
-router.put('/move-out/:id/complete', authorize('ADMIN', 'OWNER'), workflowController.completeMoveOut);
-router.post('/move-in/:id/override', authorize('ADMIN', 'OWNER'), workflowController.overrideMoveIn);
-router.post('/move-in/:id/approve', authorize('ADMIN', 'OWNER'), workflowController.approveMoveIn);
-router.put('/move-in/:id/cancel', authorize('ADMIN', 'OWNER'), workflowController.cancelMoveIn);
-router.put('/move-in/:moveInId/requirement', authorize('ADMIN', 'OWNER'), workflowController.toggleMoveInRequirement);
-router.get('/unit-prep', authorize('ADMIN', 'OWNER'), workflowController.getUnitPrepDashboard);
-router.get('/unit-prep/export', authorize('ADMIN', 'OWNER'), workflowController.exportUnitPrepPDF);
-router.put('/unit-prep/:unitId/stage', authorize('ADMIN', 'OWNER'), workflowController.updateUnitPrepStage);
+router.post('/move-out/:id/approve', checkPermission('Move-Out', 'edit'), workflowController.approveMoveOut);
+router.put('/move-out/:id/confirm', checkPermission('Move-Out', 'edit'), workflowController.confirmMoveOut);
+router.put('/move-out/:id/schedule-final', checkPermission('Move-Out', 'edit'), workflowController.scheduleFinalInspection);
+router.put('/move-out/:id/complete', checkPermission('Move-Out', 'edit'), workflowController.completeMoveOut);
+router.post('/move-in/:id/override', checkPermission('Move-In', 'edit'), workflowController.overrideMoveIn);
+router.post('/move-in/:id/approve', checkPermission('Move-In', 'edit'), workflowController.approveMoveIn);
+router.put('/move-in/:id/cancel', checkPermission('Move-In', 'edit'), workflowController.cancelMoveIn);
+router.put('/move-in/:moveInId/requirement', checkPermission('Move-In', 'edit'), workflowController.toggleMoveInRequirement);
+router.get('/unit-prep', checkPermission('Unit Preparation', 'view'), workflowController.getUnitPrepDashboard);
+router.get('/unit-prep/export', checkPermission('Unit Preparation', 'view'), workflowController.exportUnitPrepPDF);
+router.put('/unit-prep/:unitId/stage', checkPermission('Unit Preparation', 'edit'), workflowController.updateUnitPrepStage);
 router.post('/move-out/trigger/:leaseId', workflowController.triggerMoveOut);
-router.put('/move-out/cancel/:leaseId', authorize('ADMIN', 'OWNER'), workflowController.cancelMoveOut);
+router.put('/move-out/cancel/:leaseId', checkPermission('Move-Out', 'edit'), workflowController.cancelMoveOut);
 
 // Inspection Routes
 router.post('/templates', inspectionController.createTemplate);
