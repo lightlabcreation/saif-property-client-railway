@@ -283,11 +283,23 @@ const updateUnitPrepStage = async (unitId, { stage, userId }) => {
  */
 const syncMoveInStatus = async (unitId, { leaseId, bedroomId, targetDate }, tx = prisma) => {
     const logic = async (pTx) => {
-        // Find existing MoveIn
+        // Find existing MoveIn specifically for this lease/bedroom or an unassigned reservation placeholder
+        const existingConditions = [];
+        if (leaseId) {
+            existingConditions.push({ leaseId });
+            existingConditions.push({ leaseId: null });
+        } else {
+            existingConditions.push({ leaseId: null });
+        }
+        if (bedroomId) {
+            existingConditions.push({ bedroomId });
+        }
+
         const existing = await pTx.moveIn.findFirst({
             where: {
                 unitId,
-                leaseId: leaseId || null
+                status: { notIn: ['OCCUPIED', 'CANCELLED'] },
+                OR: existingConditions
             }
         });
 
@@ -348,11 +360,15 @@ const syncMoveInStatus = async (unitId, { leaseId, bedroomId, targetDate }, tx =
         }
 
         if (existing) {
-            // Update status if it's currently PENDING and should be BLOCKED or READY
-            if (existing.status !== initialStatus) {
+            const updateData = {};
+            if (leaseId && existing.leaseId !== leaseId) updateData.leaseId = leaseId;
+            if (bedroomId && existing.bedroomId !== bedroomId) updateData.bedroomId = bedroomId;
+            if (existing.status !== initialStatus) updateData.status = initialStatus;
+
+            if (Object.keys(updateData).length > 0) {
                 return await pTx.moveIn.update({
                     where: { id: existing.id },
-                    data: { status: initialStatus }
+                    data: updateData
                 });
             }
             return existing;

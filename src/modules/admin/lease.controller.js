@@ -573,6 +573,13 @@ exports.activateLease = catchAsync(async (req, res, next) => {
                 }
             });
 
+            if (lease.unit.reserved_by_id === tId) {
+                await tx.unit.update({
+                    where: { id: uId },
+                    data: { reserved_flag: false, reserved_by_id: null }
+                });
+            }
+
             // Update unit rental mode to BEDROOM_WISE
             await tx.unit.update({
                 where: { id: uId },
@@ -958,6 +965,13 @@ exports.createLease = catchAsync(async (req, res, next) => {
                         reserved_by_id: null
                     }
                 });
+
+                if (unit.reserved_by_id === tId) {
+                    await tx.unit.update({
+                        where: { id: uId },
+                        data: { reserved_flag: false, reserved_by_id: null }
+                    });
+                }
 
                 // Ensure unit is in BEDROOM_WISE mode when a bedroom lease is created
                 await tx.unit.update({
