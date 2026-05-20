@@ -43,6 +43,21 @@ exports.getAllTenants = async (req, res) => {
                                     { endDate: { gte: now } }
                                 ]
                             } 
+                        },
+                        {
+                            type: 'RESIDENT',
+                            parentId: { not: null },
+                            parent: {
+                                leases: {
+                                    some: {
+                                        status: 'Active',
+                                        OR: [
+                                            { endDate: null },
+                                            { endDate: { gte: now } }
+                                        ]
+                                    }
+                                }
+                            }
                         }
                     ]
                 }
@@ -262,9 +277,13 @@ exports.getAllTenants = async (req, res) => {
                 country: t.country
             };
         });
+        let finalFormatted = formatted;
+        if (status === 'Active') {
+            finalFormatted = formatted.filter(t => t.leaseStatus === 'Active');
+        }
 
         res.json({
-            data: formatted,
+            data: finalFormatted,
             meta: {
                 total: totalCount,
                 page: parseInt(page),

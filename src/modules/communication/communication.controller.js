@@ -217,15 +217,29 @@ exports.getConversations = async (req, res) => {
             const residents = await prisma.user.findMany({
                 where: { 
                     type: 'RESIDENT',
-                    residentLease: { status: 'Active' }
+                    OR: [
+                        { residentLease: { status: 'Active' } },
+                        { parent: { leases: { some: { status: 'Active' } } } }
+                    ]
                 },
                 include: {
                     parent: {
                         select: {
                             id: true,
                             name: true,
-                            email: true
+                            email: true,
+                            leases: {
+                                where: { status: 'Active' },
+                                select: {
+                                    id: true,
+                                    unitId: true,
+                                    unit: { select: { propertyId: true } }
+                                }
+                            }
                         }
+                    },
+                    unit: {
+                        select: { propertyId: true }
                     },
                     residentLease: {
                         select: {
@@ -236,23 +250,38 @@ exports.getConversations = async (req, res) => {
                 }
             });
 
+            // Filter out residents whose parent's active lease does not match their assigned unit
+            const activeResidents = residents.filter(r => {
+                if (r.residentLease) return true;
+                if (r.parentId && r.unitId) {
+                    return r.parent?.leases?.some(l => l.unitId === r.unitId);
+                }
+                return false;
+            });
+
             // Format residents to match user structure for communication
-            const formattedResidents = residents.map(r => ({
-                id: `resident_${r.id}`, // Prefix to distinguish from user IDs
-                name: r.name || `${r.firstName} ${r.lastName}`.trim(),
-                role: 'RESIDENT',
-                email: r.email || r.parent?.email || null,
-                phone: r.phone,
-                type: 'RESIDENT',
-                tenantId: r.parentId,
-                tenantName: r.parent?.name,
-                leaseId: r.leaseId,
-                isResident: true,
-                buildingIds: [
-                    r.buildingId,
-                    r.residentLease?.unit?.propertyId
-                ].filter(Boolean)
-            }));
+            const formattedResidents = activeResidents.map(r => {
+                const parentActiveLease = r.parent?.leases?.find(l => l.unitId === r.unitId) || r.parent?.leases?.[0];
+                const parentBuildingIds = (r.parent?.leases || []).map(l => l.unit?.propertyId).filter(Boolean);
+                return {
+                    id: `resident_${r.id}`, // Prefix to distinguish from user IDs
+                    name: r.name || `${r.firstName} ${r.lastName}`.trim(),
+                    role: 'RESIDENT',
+                    email: r.email || r.parent?.email || null,
+                    phone: r.phone,
+                    type: 'RESIDENT',
+                    tenantId: r.parentId,
+                    tenantName: r.parent?.name,
+                    leaseId: r.leaseId || (parentActiveLease?.id || null),
+                    isResident: true,
+                    buildingIds: [
+                        r.buildingId,
+                        r.unit?.propertyId,
+                        r.residentLease?.unit?.propertyId,
+                        ...parentBuildingIds
+                    ].filter(Boolean)
+                };
+            });
 
             // Combine users and residents
             const allRecipients = [...formattedUsers, ...formattedResidents];
