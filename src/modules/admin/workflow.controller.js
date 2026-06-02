@@ -463,8 +463,17 @@ const getUnitPrepDashboard = async (req, res) => {
             }
         });
 
+        // Filter out units that have an active, incomplete Move-Out record
+        const prepUnitsOnly = units.filter(unit => {
+            const latestMoveOut = unit.moveOuts?.[0];
+            if (latestMoveOut && latestMoveOut.status !== 'COMPLETED' && latestMoveOut.status !== 'CANCELLED') {
+                return false;
+            }
+            return true;
+        });
+
         // For each unit, check if it's blocked by required tickets
-        const dashboardData = await Promise.all(units.map(async (unit) => {
+        const dashboardData = await Promise.all(prepUnitsOnly.map(async (unit) => {
             const openTickets = await prisma.ticket.findMany({
                 where: { unitId: unit.id, status: 'Open' }
             });
