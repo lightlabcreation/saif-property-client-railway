@@ -288,74 +288,52 @@ exports.getVacancyStats = async (req, res) => {
 
         // Fetch all units with their bedrooms and active leases
         let units;
-        try {
-            const allUnits = await prisma.unit.findMany({
-                where: whereClause,
-                include: {
-                    property: true,
-                    bedroomsList: true,
-                    leases: {
-                        where: { status: 'Active' },
-                        select: { id: true, bedroomId: true }
+        const fetchArgs = {
+            where: {
+                ...whereClause,
+                OR: [
+                    { unit_status: 'ACTIVE' },
+                    { reserved_flag: true },
+                    { bedroomsList: { some: { reserved_flag: true } } }
+                ]
+            },
+            include: {
+                property: true,
+                bedroomsList: {
+                    include: {
+                        leases: {
+                            where: { status: 'Active' },
+                            select: { id: true, bedroomId: true }
+                        }
                     }
+                },
+                leases: {
+                    where: { status: 'Active' },
+                    select: { id: true, bedroomId: true }
                 }
-            });
-            // FINAL CLEAN FILTER (Requirement 3.1.4)
-            // 1. Hide anything marked as INACTIVE (unless it has a tenant/lease).
-            // 2. Exception: Your original 56 legacy units are protected so they always show up.
-            units = allUnits.filter(u => {
-                const isInactive = u.unit_status === 'INACTIVE';
-                const hasActiveLease = u.leases && u.leases.length > 0;
-                
-                if (isInactive && !hasActiveLease) {
-                    // Logic: Hide it if it's a new unit you created for testing.
-                    // We know your legacy units (56 of them) should be active.
-                    // If the unit has no TARGET DATE set yet, or if its unitNumber looks like a test, we hide it.
-                    const isNewUnit = !u.gc_delivered_target_date || u.unitNumber.includes('12') || u.unitNumber.toLowerCase().includes('test');
-                    if (isNewUnit) return false;
-                }
-                return true;
-            });
-        } catch (err) {
-            console.warn('Vacancy Stats Fallback: unit_status column not recognized by client. Filtering manually.');
-            const fallbackWhere = { ...whereClause };
-            delete fallbackWhere.OR;
-            
-            const allUnits = await prisma.unit.findMany({
-                where: fallbackWhere,
-                include: {
-                    property: true,
-                    bedroomsList: true,
-                    leases: {
-                        where: { status: 'Active' },
-                        select: { id: true, bedroomId: true }
-                    }
-                }
-            });
+            }
+        };
 
-            // FINAL CLEAN FILTER (Requirement 3.1.4)
-            units = allUnits.filter(u => {
-                const isInactive = u.unit_status === 'INACTIVE';
-                const hasActiveLease = u.leases && u.leases.length > 0;
-                
-                if (isInactive && !hasActiveLease) {
-                    const isNewUnit = !u.gc_delivered_target_date || (u.unitNumber && (u.unitNumber.includes('12') || u.unitNumber.toLowerCase().includes('test')));
-                    if (isNewUnit) return false;
-                }
-                return true;
+        try {
+            units = await prisma.unit.findMany(fetchArgs);
+        } catch (err) {
+            console.warn('Vacancy Stats Fallback: unit_status column not recognized by client. Fetching all units.');
+            const fallbackWhere = { ...whereClause };
+            units = await prisma.unit.findMany({
+                where: fallbackWhere,
+                include: fetchArgs.include
             });
         }
 
-        // Vacant bedroom count across all ACTIVE units (Requirement check: excludes construction)
         let totalVacantBedrooms = 0;
-        units.forEach(u => {
-            const leasedBedroomIds = new Set(u.leases.map(l => l.bedroomId).filter(Boolean));
-            const vacantBedrooms = u.bedroomsList.filter(b => b.status === 'Vacant' || !leasedBedroomIds.has(b.id)).length;
-            totalVacantBedrooms += vacantBedrooms;
-        });
-
-        // Vacancy by Building — distinguish FULL_UNIT vs BEDROOM_WISE (Issues 6 & 7)
+        let total = 0;
+        let occupied = 0;
+        let vacant = 0;
+        let fullUnitCount = 0;
+        let bedroomWiseCount = 0;
+        
         const buildingStats = {};
+        
         units.forEach(u => {
             const propName = u.property?.name || 'Other';
             if (!buildingStats[propName]) buildingStats[propName] = {
@@ -366,36 +344,58 @@ exports.getVacancyStats = async (req, res) => {
                 vacantBedrooms: 0,
                 hasBedroomWise: false
             };
+            
             buildingStats[propName].total++;
+            total++;
 
-            if (u.rentalMode === 'FULL_UNIT') {
-                if (u.status === 'Vacant') {
+            const isFullUnit = u.rentalMode === 'FULL_UNIT';
+
+            if (isFullUnit) {
+                fullUnitCount++;
+                const activeLease = u.leases && u.leases.length > 0;
+                const isReserved = u.reserved_flag;
+                
+                if (activeLease || isReserved) {
+                    occupied++;
+                    buildingStats[propName].occupied++;
+                } else {
+                    vacant++;
                     buildingStats[propName].vacant++;
                     buildingStats[propName].fullUnitVacant++;
-                } else {
-                    buildingStats[propName].occupied++;
                 }
             } else {
                 // BEDROOM_WISE
+                bedroomWiseCount++;
                 buildingStats[propName].hasBedroomWise = true;
-                if (u.leases.length === 0) {
+                
+                let unitIsFullyVacant = true;
+                let unitIsFullyOccupied = true;
+                
+                if (!u.bedroomsList || u.bedroomsList.length === 0) {
+                    vacant++;
                     buildingStats[propName].vacant++;
                 } else {
-                    buildingStats[propName].occupied++;
-                    // Count vacant bedrooms
-                    const leasedBedroomIds = new Set(u.leases.map(l => l.bedroomId).filter(Boolean));
-                    const vBedrooms = u.bedroomsList.filter(b => b.status === 'Vacant' || !leasedBedroomIds.has(b.id)).length;
-                    buildingStats[propName].vacantBedrooms += vBedrooms;
+                    u.bedroomsList.forEach(bedroom => {
+                        const bLease = (bedroom.leases && bedroom.leases.length > 0) || (u.leases || []).find(l => l.bedroomId === bedroom.id);
+                        if (bLease || bedroom.status === 'Occupied' || bedroom.reserved_flag) {
+                            unitIsFullyVacant = false;
+                        } else {
+                            unitIsFullyOccupied = false;
+                            totalVacantBedrooms++;
+                            buildingStats[propName].vacantBedrooms++;
+                        }
+                    });
+                    
+                    if (unitIsFullyVacant) {
+                        vacant++;
+                        buildingStats[propName].vacant++;
+                    } else {
+                        occupied++; // Partially or fully occupied
+                        buildingStats[propName].occupied++;
+                    }
                 }
             }
         });
-
-        const total = units.length;
-        const occupied = units.filter(u => u.status !== 'Vacant').length;
-        const vacant = total - occupied;
-        
-        const fullUnitCount = units.filter(u => u.rentalMode === 'FULL_UNIT').length;
-        const bedroomWiseCount = units.filter(u => u.rentalMode === 'BEDROOM_WISE').length;
 
         // NEW: Readiness Metrics for the Summary Boxes
         const readyForLeasing = units.filter(u => u.ready_for_leasing).length;
