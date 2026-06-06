@@ -64,7 +64,7 @@ const initMoveOutWorkflow = async (leaseId, tx = prisma) => {
     };
 
     if (tx === prisma) {
-        return await prisma.$transaction(logic);
+        return await prisma.$transaction(logic, { timeout: 15000 });
     } else {
         return await logic(tx);
     }
