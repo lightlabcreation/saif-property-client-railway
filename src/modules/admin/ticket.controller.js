@@ -743,15 +743,19 @@ exports.exportTickets = async (req, res) => {
     font-size: 10pt;
     border: 0.5pt solid #cbd5e1;
     vertical-align: middle;
+    text-align: left;
   }
   .text-cell {
     mso-number-format:"\\@";
+    text-align: left;
   }
   .date-cell {
     mso-number-format:"yyyy-mm-dd hh\\:mm\\:ss";
+    text-align: left;
   }
   .number-cell {
     mso-number-format:"0\\.00";
+    text-align: left;
   }
 </style>
 </head>
