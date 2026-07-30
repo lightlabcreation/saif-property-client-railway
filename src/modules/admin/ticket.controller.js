@@ -77,8 +77,9 @@ exports.getAllTickets = async (req, res) => {
                 createdAtRaw: t.createdAt.toISOString(),
                 date: t.createdAt.toISOString().split('T')[0],
                 resolvedAt: t.resolvedAt ? t.resolvedAt.toISOString() : null,
-                assignedToName: t.assignedTo?.name || 'Unassigned',
+                assignedToName: t.assignedToNameString || t.assignedTo?.name || 'Unassigned',
                 assignedToId: t.assignedToId,
+                assignedToNameString: t.assignedToNameString,
                 assignedByName: t.assignedBy?.name || 'N/A',
                 assignedById: t.assignedById,
                 assignedAt: t.assignedAt ? t.assignedAt.toISOString() : null,
@@ -149,7 +150,7 @@ exports.updateTicketStatus = async (req, res) => {
 // POST /api/admin/tickets (Admin creating ticket for tenant)
 exports.createTicket = async (req, res) => {
     try {
-        const { tenantId, subject, description, priority, category, unitId } = req.body;
+        const { tenantId, subject, description, priority, category, unitId, assignedToId } = req.body;
         let { propertyId } = req.body;
 
         const attachmentUrls = [];
@@ -191,6 +192,22 @@ exports.createTicket = async (req, res) => {
             assignId = admin ? admin.id : 1; 
         }
 
+        let assignedToIdVal = null;
+        let assignedToNameStringVal = null;
+        let assignedByIdVal = null;
+        let assignedAtVal = null;
+
+        if (assignedToId) {
+            const parsedId = parseInt(assignedToId);
+            if (isNaN(parsedId)) {
+                assignedToNameStringVal = assignedToId;
+            } else {
+                assignedToIdVal = parsedId;
+            }
+            assignedByIdVal = req.user?.id || null;
+            assignedAtVal = new Date();
+        }
+
         const createdTickets = [];
         for (const pid of targetPropertyIds) {
             const ticket = await prisma.ticket.create({
@@ -200,10 +217,14 @@ exports.createTicket = async (req, res) => {
                     description,
                     priority,
                     category: category || null,
-                    status: 'Open',
+                    status: assignedToId ? 'Assigned' : 'Open',
                     propertyId: pid,
                     unitId: pid ? (unitId ? parseInt(unitId) : null) : null, // Units only apply if 1 property selected usually
-                    attachmentUrls: attachmentUrls.length > 0 ? JSON.stringify(attachmentUrls) : null
+                    attachmentUrls: attachmentUrls.length > 0 ? JSON.stringify(attachmentUrls) : null,
+                    assignedToId: assignedToIdVal,
+                    assignedToNameString: assignedToNameStringVal,
+                    assignedById: assignedByIdVal,
+                    assignedAt: assignedAtVal
                 }
             });
             createdTickets.push(ticket);
@@ -244,206 +265,18 @@ exports.updateTicket = async (req, res) => {
         if (assignedToId !== undefined) {
             if (assignedToId === null || assignedToId === '' || assignedToId === 0) {
                 updateData.assignedToId = null;
+                updateData.assignedToNameString = null;
                 updateData.assignedById = null;
                 updateData.assignedAt = null;
             } else {
-                updateData.assignedToId = parseInt(assignedToId);
-                // Track who assigned it and when
-                updateData.assignedById = req.user?.id || null;
-                updateData.assignedAt = new Date();
-                // Automatically transition status to Assigned if currently New/Open
-                const currentTicket = await prisma.ticket.findUnique({ where: { id: parseInt(id) } });
-                if (currentTicket && (!status || currentTicket.status === 'New' || currentTicket.status === 'Open')) {
-                    updateData.status = 'Assigned';
+                const parsedId = parseInt(assignedToId);
+                if (isNaN(parsedId)) {
+                    updateData.assignedToNameString = assignedToId;
+                    updateData.assignedToId = null;
+                } else {
+                    updateData.assignedToId = parsedId;
+                    updateData.assignedToNameString = null;
                 }
-            }
-        }
-
-        const updated = await prisma.ticket.update({
-            where: { id: parseInt(id) },
-            data: updateData
-        });
-
-        // Trigger Auto-Progression for Unit Prep Flow if applicable
-        if (updated.unitId && updated.status && ['Closed', 'Completed', 'Resolved'].includes(updated.status)) {
-            await workflowService.checkAndProgressUnitPrep(updated.unitId);
-        }
-
-        res.json(updated);
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ message: 'Error updating ticket' });
-    }
-};
-
-// DELETE /api/admin/tickets/:id
-exports.deleteTicket = async (req, res) => {
-    try {
-        const { id } = req.params;
-        await prisma.ticket.delete({
-            where: { id: parseInt(id) }
-        });
-        res.json({ message: 'Ticket deleted' });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ message: 'Error deleting ticket' });
-    }
-};
-
-// GET /api/admin/tickets/:ticketId/attachments/:attachmentId
-exports.getTicketAttachment = async (req, res) => {
-    try {
-        const { ticketId, attachmentId } = req.params;
-        const ticket = await prisma.ticket.findUnique({
-            where: { id: parseInt(ticketId) }
-        });
-
-        if (!ticket || !ticket.attachmentUrls) {
-            return res.status(404).json({ message: 'Attachment not found' });
-        }
-
-        let attachments;
-        try {
-            attachments = JSON.parse(ticket.attachmentUrls);
-        } catch (e) {
-            return res.status(500).json({ message: 'Corrupted attachment data' });
-        }
-        const attachment = attachments[parseInt(attachmentId)];
-
-        if (!attachment || !attachment.url) {
-            return res.status(404).json({ message: 'Attachment not found' });
-        }
-
-        // Proxy the file from Cloudinary 
-        https.get(attachment.url, (response) => {
-            if (response.statusCode !== 200) {
-                return res.status(response.statusCode).json({ message: 'Failed to fetch attachment from storage' });
-            }
-
-            // Trust Cloudinary's content type or guess based on type
-            const contentType = response.headers['content-type'] || (attachment.type === 'image' ? 'image/jpeg' : 'application/octet-stream');
-
-            res.setHeader('Content-Type', contentType);
-            res.setHeader('Content-Length', response.headers['content-length']);
-            // Force inline display for previewable types
-            res.setHeader('Content-Disposition', 'inline');
-
-            response.pipe(res);
-        }).on('error', (err) => {
-            console.error('Attachment Proxy Error:', err);
-            res.status(500).json({ message: 'Error proxying attachment' });
-        });
-
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ message: 'Server error' });
-    }
-};
-
-// GET /api/admin/tickets/export
-exports.exportTickets = async (req, res) => {
-    try {
-        const { startDate, endDate, propertyId, status, category, priority, assignedToId, userId, format } = req.query;
-
-        const where = {};
-        if (userId) {
-            where.userId = parseInt(userId);
-        }
-        if (startDate || endDate) {
-            where.createdAt = {};
-            if (startDate) {
-                where.createdAt.gte = new Date(startDate);
-            }
-            if (endDate) {
-                const end = new Date(endDate);
-                if (!endDate.includes('T')) {
-                    end.setHours(23, 59, 59, 999);
-                }
-                where.createdAt.lte = end;
-            }
-        }
-        if (propertyId && propertyId !== 'all') {
-            where.propertyId = parseInt(propertyId);
-        }
-        if (status && status !== 'All') {
-            where.status = status;
-        }
-        if (category) {
-            where.category = category;
-        }
-        if (priority && priority !== 'All') {
-            where.priority = priority;
-        }
-        if (assignedToId) {
-            where.assignedToId = parseInt(assignedToId);
-        }
-
-        const tickets = await prisma.ticket.findMany({
-            where,
-            include: {
-                user: true,
-                unit: { include: { property: true } },
-                property: true,
-                inspection: { include: { inspector: true } },
-                assignedTo: true,
-                assignedBy: true
-            },
-            orderBy: { createdAt: 'desc' }
-        });
-
-        const formatFriendlyDuration = (ms) => {
-            if (!ms || isNaN(ms) || ms < 0) return 'N/A';
-            const totalMinutes = Math.floor(ms / (1000 * 60));
-            const totalHours = Math.floor(totalMinutes / 60);
-            const mins = totalMinutes % 60;
-            const hours = totalHours % 24;
-            const days = Math.floor(totalHours / 24);
-
-            let parts = [];
-            if (days > 0) parts.push(`${days} day${days > 1 ? 's' : ''}`);
-            createdTickets.push(ticket);
-        }
-
-        // Return first or summary
-        res.status(201).json(targetPropertyIds.length === 1 ? createdTickets[0] : { success: true, count: createdTickets.length });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ message: 'Error creating ticket' });
-    }
-};
-
-// PUT /api/admin/tickets/:id
-exports.updateTicket = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { subject, description, priority, category, status, propertyId, unitId, tenantId, assignedToId } = req.body;
-
-        const updateData = {
-            subject,
-            description,
-            priority,
-            category,
-            status,
-            propertyId: propertyId ? parseInt(propertyId) : undefined,
-            unitId: unitId ? parseInt(unitId) : undefined,
-            userId: tenantId ? parseInt(tenantId) : undefined
-        };
-
-        if (status !== undefined) {
-            updateData.resolvedAt = status === 'Resolved' ? new Date() : null;
-            if (status === 'Completed') {
-                updateData.completedAt = new Date();
-            }
-        }
-
-        if (assignedToId !== undefined) {
-            if (assignedToId === null || assignedToId === '' || assignedToId === 0) {
-                updateData.assignedToId = null;
-                updateData.assignedById = null;
-                updateData.assignedAt = null;
-            } else {
-                updateData.assignedToId = parseInt(assignedToId);
-                // Track who assigned it and when
                 updateData.assignedById = req.user?.id || null;
                 updateData.assignedAt = new Date();
                 // Automatically transition status to Assigned if currently New/Open
@@ -624,7 +457,7 @@ exports.exportTickets = async (req, res) => {
             const unitNumber = t.unit?.unitNumber || 'N/A';
             const tenantName = t.user?.name || 'N/A';
             
-            const assignee = t.assignedTo?.name || t.inspection?.inspector?.name || 'Unassigned';
+            const assignee = t.assignedToNameString || t.assignedTo?.name || t.inspection?.inspector?.name || 'Unassigned';
             const assignedBy = t.assignedBy?.name || 'N/A';
             const dateAssigned = t.assignedAt ? t.assignedAt.toISOString().replace('T', ' ').substring(0, 19) : 'N/A';
             
@@ -751,10 +584,6 @@ exports.exportTickets = async (req, res) => {
   }
   .date-cell {
     mso-number-format:"yyyy-mm-dd hh\\:mm\\:ss";
-    text-align: left;
-  }
-  .number-cell {
-    mso-number-format:"0\\.00";
     text-align: left;
   }
 </style>
