@@ -4,6 +4,12 @@ const OpenAI = require('openai');
 const { validateSqlQuery } = require('../../services/aiValidator.service');
 const { PrismaClient } = require('@prisma/client');
 const { searchDocuments } = require('../../services/qdrant.service');
+
+// Polyfill to allow JSON.stringify to serialize BigInts (like COUNT(*)) returned by Prisma queryRaw
+BigInt.prototype.toJSON = function () {
+    return Number(this);
+};
+
 const prisma = new PrismaClient();
 
 // Initialize OpenAI (Ensure OPENAI_API_KEY is in your .env)
