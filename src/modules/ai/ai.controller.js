@@ -68,6 +68,7 @@ CRITICAL RULES:
 5. DATABASE TABLE NAMES ARE CASE SENSITIVE. You MUST use the exact underlying table name defined by the @@map("tablename") directive in the schema. For example, use 'unit' instead of 'Unit', 'property' instead of 'Property', 'user' instead of 'User'.
 6. When asked about "Vacant Units", you MUST follow this exact dashboard business logic: Only consider units where unit_status = 'ACTIVE' OR reserved_flag = 1. For rentalMode = 'FULL_UNIT', a unit is vacant ONLY IF it does NOT have an active lease (lease.status = 'Active'), reserved_flag = 0, and physical_occupancy_status != 'Temporarily Occupied'. For rentalMode = 'BEDROOM_WISE', a unit is vacant ONLY IF ALL of its bedrooms are vacant (no active leases and reserved_flag = 0). Use LEFT JOINs or EXISTS subqueries.
 7. If the user is just saying hello, making small talk, or asking a general question that doesn't require a database query, return exactly: "CONVERSATION: " followed by your response.
+8. HUMAN-READABLE OUTPUT: Whenever you return lists of records (like Leases, Tickets, Units, etc.), you MUST use JOINs to replace raw IDs with human-readable names. For example, join the 'user' table to return the tenant's 'firstName' and 'lastName' instead of 'tenantId', and join the 'unit' and 'property' tables to return the unit and building names instead of 'unitId'. Do not return raw IDs to the user.
 
 Document Context (From Uploaded Leases/Inspections):
 ${documentContext}
