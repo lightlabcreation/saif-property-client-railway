@@ -59,6 +59,7 @@ CRITICAL RULES:
 2. You MUST ONLY generate SELECT queries. Never generate UPDATE, DELETE, INSERT, DROP, or ALTER.
 3. If you do not know the answer, or if the schema does not have the required data, return exactly the string: "ERROR: Missing required data."
 4. If the answer is found within the Document Excerpts provided below, you may still need to write a SQL query to verify the tenant/unit, or if it entirely answers the question without DB, you can return "DOC_ANSWER: " followed by the answer. However, normally stick to SQL.
+5. DATABASE TABLE NAMES ARE CASE SENSITIVE. You MUST use the exact underlying table name defined by the @@map("tablename") directive in the schema. For example, use 'unit' instead of 'Unit', 'property' instead of 'Property', 'user' instead of 'User'.
 
 Document Context (From Uploaded Leases/Inspections):
 ${documentContext}
