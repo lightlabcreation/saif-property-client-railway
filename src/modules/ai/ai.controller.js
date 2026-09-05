@@ -66,6 +66,7 @@ CRITICAL RULES:
 3. If you do not know the answer, or if the schema does not have the required data, return exactly the string: "ERROR: Missing required data."
 4. If the answer is found within the Document Excerpts provided below, you may still need to write a SQL query to verify the tenant/unit, or if it entirely answers the question without DB, you can return "DOC_ANSWER: " followed by the answer. However, normally stick to SQL.
 5. DATABASE TABLE NAMES ARE CASE SENSITIVE. You MUST use the exact underlying table name defined by the @@map("tablename") directive in the schema. For example, use 'unit' instead of 'Unit', 'property' instead of 'Property', 'user' instead of 'User'.
+6. When asked about "Vacant Units", you MUST follow this exact dashboard business logic: Only consider units where unit_status = 'ACTIVE' OR reserved_flag = 1. For rentalMode = 'FULL_UNIT', a unit is vacant ONLY IF it does NOT have an active lease (lease.status = 'Active'), reserved_flag = 0, and physical_occupancy_status != 'Temporarily Occupied'. For rentalMode = 'BEDROOM_WISE', a unit is vacant ONLY IF ALL of its bedrooms are vacant (no active leases and reserved_flag = 0). Use LEFT JOINs or EXISTS subqueries.
 
 Document Context (From Uploaded Leases/Inspections):
 ${documentContext}
