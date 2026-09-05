@@ -26,7 +26,7 @@ const queryAI = async (req, res) => {
         }
 
         // 1. Load your Prisma schema to give the AI context of your database structure
-        const schemaPath = path.join(__dirname, '../../../../prisma/schema.prisma');
+        const schemaPath = path.join(__dirname, '../../../prisma/schema.prisma');
         const schema = fs.readFileSync(schemaPath, 'utf8');
 
         // 1.5. Check Qdrant for relevant unstructured documents (RAG)
