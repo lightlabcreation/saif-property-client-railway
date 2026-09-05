@@ -8,6 +8,7 @@ const tenantRoutes = require('./modules/admin/tenant.routes');
 const leaseRoutes = require('./modules/admin/lease.routes');
 const unitRoutes = require('./modules/admin/unit.routes');
 const vehicleRoutes = require('./modules/admin/vehicle.routes');
+const aiRoutes = require('./modules/ai/ai.routes');
 // const ownerRoutes = require('./modules/owner/owner.routes');
 // const tenantRoutes = require('./modules/tenant/tenant.routes');
 
@@ -44,5 +45,6 @@ router.use('/admin', authenticate, adminRoutes);
 router.use('/owner', authenticate, ownerRoutes);
 router.use('/tenant', authenticate, tenantPortalRoutes);
 router.use('/communication', authenticate, require('./modules/communication/communication.routes'));
+router.use('/ai', authenticate, aiRoutes);
 
 module.exports = router;
