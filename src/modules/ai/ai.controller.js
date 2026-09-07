@@ -93,7 +93,9 @@ ${schema}
             temperature: 0, // Keep it deterministic for SQL generation
         });
 
-        const generatedSql = chatCompletion.choices[0].message.content.trim();
+        let generatedSql = chatCompletion.choices[0].message.content.trim();
+        // Clean markdown backticks if AI hallucinates them
+        generatedSql = generatedSql.replace(/```sql/gi, '').replace(/```/g, '').trim();
 
         if (generatedSql.startsWith("ERROR:")) {
             return res.status(400).json({ error: "The AI could not find the required data to answer that question." });
