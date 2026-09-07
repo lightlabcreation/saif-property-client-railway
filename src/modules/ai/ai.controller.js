@@ -65,13 +65,15 @@ CRITICAL RULES:
 2. You MUST ONLY generate SELECT queries. Never generate UPDATE, DELETE, INSERT, DROP, or ALTER.
 3. If you do not know the answer, or if the schema does not have the required data, return exactly the string: "ERROR: Missing required data."
 4. If the answer is found within the Document Excerpts provided below, you may still need to write a SQL query to verify the tenant/unit, or if it entirely answers the question without DB, you can return "DOC_ANSWER: " followed by the answer. However, normally stick to SQL.
-5. DATABASE TABLE NAMES ARE CASE SENSITIVE. You MUST use the exact underlying table name defined by the @@map("tablename") directive in the schema. For example, use 'unit' instead of 'Unit', 'property' instead of 'Property', 'user' instead of 'User'. When the user asks about "buildings", you MUST query the 'property' table.
+5. DATABASE TABLE NAMES ARE CASE SENSITIVE. You MUST use the exact underlying table name defined by the @@map("tablename") directive in the schema. For example, use 'unit' instead of 'Unit', 'property' instead of 'Property', 'user' instead of 'User', 'movein' instead of 'MoveIn', 'moveout' instead of 'MoveOut'. When the user asks about "buildings", you MUST query the 'property' table.
 6. When asked about "Vacant Units", you MUST follow this exact dashboard business logic: Only consider units where unit_status = 'ACTIVE' OR reserved_flag = 1. For rentalMode = 'FULL_UNIT', a unit is vacant ONLY IF it does NOT have an active lease (lease.status = 'Active'), reserved_flag = 0, and physical_occupancy_status != 'Temporarily Occupied'. For rentalMode = 'BEDROOM_WISE', a unit is vacant ONLY IF ALL of its bedrooms are vacant (no active leases and reserved_flag = 0). Use LEFT JOINs or EXISTS subqueries.
-7. When asked about "Occupied Units", you MUST follow the strict dashboard filtering logic: A unit is considered occupied ONLY IF the 'status' column is exactly 'Occupied'. Do not count 'Fully Booked' units or check active leases for this specific filter.
-8. When asked about "Fully Booked Units", you MUST follow the strict dashboard filtering logic: A unit is considered fully booked ONLY IF the 'status' column is exactly 'Fully Booked'. Do not include 'Occupied' units for this specific filter.
-9. If the user is just saying hello, making small talk, or asking a general question that doesn't require a database query, return exactly: "CONVERSATION: " followed by your response.
-10. HUMAN-READABLE OUTPUT: Whenever you return lists of records (like Leases, Tickets, Units, etc.), you MUST use JOINs to replace raw IDs with human-readable names. For example, join the 'user' table to return the tenant's 'firstName' and 'lastName' instead of 'tenantId', and join the 'unit' and 'property' tables to return the unit and building names instead of 'unitId'. Do not return raw IDs to the user.
-11. RENT ROLL & REVENUE: To calculate "Total Rent", "Revenue", or "Rent Collected", you MUST SUM the 'paidAmount' or 'rent' column from the 'invoice' table where status = 'paid' and category = 'RENT'. To calculate "Potential Rent", SUM the 'rentAmount' column from the 'unit' table.
+7. When asked about "Occupied Units" as a strict filter, a unit is considered occupied ONLY IF the 'status' column is exactly 'Occupied'. Do not count 'Fully Booked'.
+8. When asked about "Fully Booked Units", a unit is considered fully booked ONLY IF the 'status' column is exactly 'Fully Booked'.
+9. When asked about "Occupancy Percentage", "Vacancy Rate", or "Breakdown by building", you must calculate it out of total active units. Occupancy % formula: (SUM(CASE WHEN status IN ('Occupied', 'Fully Booked') THEN 1 ELSE 0 END) / COUNT(*)) * 100. Vacancy % formula: (SUM(CASE WHEN status NOT IN ('Occupied', 'Fully Booked') THEN 1 ELSE 0 END) / COUNT(*)) * 100. For breakdowns or 'highest/lowest', JOIN the 'property' table, GROUP BY property.name, and use ORDER BY ... DESC LIMIT 1 if needed.
+10. CONVERSATIONAL FALLBACK: If the user asks a question with poor grammar that you cannot confidently turn into SQL, or if they are just making small talk/asking a general question, you MUST return exactly: "CONVERSATION: " followed by your response. You are absolutely forbidden from returning plain conversational text without the "CONVERSATION: " prefix.
+11. HUMAN-READABLE OUTPUT: Whenever you return lists of records (like Leases, Tickets, Units, etc.), you MUST use JOINs to replace raw IDs with human-readable names. For example, join the 'user' table to return the tenant's 'firstName' and 'lastName' instead of 'tenantId', and join the 'unit' and 'property' tables to return the unit and building names instead of 'unitId'. Do not return raw IDs to the user.
+12. RENT ROLL & REVENUE: To calculate "Total Current Monthly Rent" or "Rent Roll", you MUST SUM the 'monthlyRent' column from the 'lease' table where status = 'Active'. To calculate "Collected Rent" or "Revenue", you MUST SUM the 'paidAmount' column from the 'invoice' table where status = 'paid'. To calculate "Potential Rent", you MUST JOIN the 'unittyperates' table ON unit.unitType = unittyperates.typeName and SUM(unittyperates.fullUnitRate). Do NOT use unit.rentAmount for Potential Rent.
+13. RESERVATIONS: There is no 'reservation' table. To query reservations, you MUST query the 'unit' or 'bedroom' tables and filter by reserved_flag = 1. The date a reservation "starts" refers to the 'tentative_move_in_date' column.
 
 Document Context (From Uploaded Leases/Inspections):
 ${documentContext}
@@ -122,8 +124,13 @@ ${schema}
         }
 
         // 4. SECURITY CHECK: Validate the SQL using our AST parser (Code-Level Blocking)
-        // This will throw an error if the AI hallucinated an UPDATE or DELETE
-        const safeSql = validateSqlQuery(generatedSql);
+        let safeSql;
+        try {
+            safeSql = validateSqlQuery(generatedSql);
+        } catch (astError) {
+            console.error("AST Parser Error:", astError.message);
+            return res.status(400).json({ error: "The AI had trouble understanding the grammar of your question and could not securely convert it into database logic. Please rephrase!" });
+        }
 
         // 5. Execute on the isolated database
         let resultData;
