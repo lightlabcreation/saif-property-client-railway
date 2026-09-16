@@ -59,8 +59,8 @@ async function saveDocumentChunks(chunks) {
  */
 async function searchDocuments(queryVector, propertyId, limit = 5) {
   try {
-    const searchResults = await qdrantClient.search(COLLECTION_NAME, {
-      vector: queryVector,
+    const searchResults = await qdrantClient.query(COLLECTION_NAME, {
+      query: queryVector,
       limit: limit,
       filter: {
         must: [
@@ -75,7 +75,7 @@ async function searchDocuments(queryVector, propertyId, limit = 5) {
       with_payload: true
     });
     
-    return searchResults.map(res => res.payload.text);
+    return searchResults.points.map(res => res.payload.text);
   } catch (error) {
     console.error('[Qdrant] Error searching documents:', error.message);
     return []; // Return empty gracefully so it doesn't crash the AI flow
