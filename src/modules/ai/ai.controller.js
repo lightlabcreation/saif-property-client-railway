@@ -55,6 +55,9 @@ const queryAI = async (req, res) => {
             // Continue without document context if Qdrant fails
         }
 
+        // 1.8 Dynamic Date Context
+        const currentDate = new Date().toISOString().split('T')[0];
+
         // 2. Instruct the AI
         const systemPrompt = `
 You are a highly intelligent Property Management System (PMS) AI Assistant.
@@ -75,6 +78,19 @@ CRITICAL RULES:
 12. RENT ROLL & REVENUE: To calculate "Total Current Monthly Rent" or "Rent Roll", you MUST SUM the 'monthlyRent' column from the 'lease' table where status = 'Active'. To calculate "Collected Rent" or "Revenue", you MUST SUM the 'paidAmount' column from the 'invoice' table where status = 'paid'. To calculate "Potential Rent", you MUST JOIN the 'unittyperates' table ON unit.unitType = unittyperates.typeName and SUM(unittyperates.fullUnitRate). Do NOT use unit.rentAmount for Potential Rent.
 13. RESERVATIONS: There is no 'reservation' table. To query reservations, you MUST query the 'unit' or 'bedroom' tables and filter by reserved_flag = 1. The date a reservation "starts" refers to the 'tentative_move_in_date' column.
 14. MAINTENANCE REPORTS: When asked to "prepare a maintenance report", you MUST query BOTH the 'ticket' table (for maintenance tickets) AND the 'maintenancetask' table (for scheduled tasks) and return combined or separate result sets. For the ticket table, filter by createdAt within the requested date range. For maintenancetask, filter by dueDate within the requested date range. "Last month" means the previous calendar month.
+15. RENT/PAYMENT BUSINESS RULES:
+- "Unpaid rent" or "not paid rent" means the tenant has an invoice where status = 'Unpaid' OR status = 'Pending'.
+- "Partial payments" means status = 'Partial'.
+- "Outstanding balances" means looking at total amounts across invoices where status != 'Paid'.
+- For date-based questions (e.g., "September rent"), you MUST look at the invoice dueDate.
+
+FEW-SHOT EXAMPLES:
+- User: "tenants who have not paid September rent"
+  SQL: SELECT u.firstName, u.lastName, i.dueDate, i.amount FROM user u JOIN lease l ON u.id = l.tenantId JOIN invoice i ON l.id = i.leaseId WHERE (i.status = 'Unpaid' OR i.status = 'Pending') AND i.dueDate >= 'YYYY-09-01' AND i.dueDate < 'YYYY-10-01'
+- User: "occupancy percentage"
+  SQL: SELECT (SUM(CASE WHEN status IN ('Occupied', 'Fully Booked') THEN 1 ELSE 0 END) / COUNT(*)) * 100 as occupancy_percentage FROM unit WHERE unit_status = 'ACTIVE'
+
+CURRENT DATE CONTEXT: Today's date is ${currentDate}. If a user asks for a month without specifying a year, assume the year closest to ${currentDate}.
 
 Document Context (From Uploaded Leases/Inspections):
 ${documentContext}
@@ -83,86 +99,124 @@ Database Schema:
 ${schema}
 `;
 
-        // 3. Get the SQL Query from OpenAI
-        const messages = [
+        // 3. Agentic Retry Loop
+        let messages = [
             { role: "system", content: systemPrompt },
             ...history,
             { role: "user", content: question }
         ];
 
-        const chatCompletion = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: messages,
-            temperature: 0, // Keep it deterministic for SQL generation
-        });
+        let safeSql = "";
+        let resultData = [];
+        let finalAnswer = "";
+        let isDirectAnswer = false;
+        
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            const chatCompletion = await openai.chat.completions.create({
+                model: "gpt-4o",
+                messages: messages,
+                temperature: 0, 
+            });
 
-        let generatedSql = chatCompletion.choices[0].message.content.trim();
-        // Clean markdown backticks if AI hallucinates them
-        generatedSql = generatedSql.replace(/```sql/gi, '').replace(/```/g, '').trim();
+            let generatedSql = chatCompletion.choices[0].message.content.trim();
+            generatedSql = generatedSql.replace(/```sql/gi, '').replace(/```/g, '').trim();
 
-        if (generatedSql.startsWith("ERROR:")) {
-            return res.status(400).json({ error: "The AI could not find the required data to answer that question." });
+            if (generatedSql.startsWith("ERROR:")) {
+                return res.status(400).json({ error: "The AI could not find the required data to answer that question." });
+            }
+
+            if (generatedSql.startsWith("DOC_ANSWER:")) {
+                isDirectAnswer = true;
+                finalAnswer = generatedSql.replace("DOC_ANSWER:", "").trim();
+                break;
+            }
+
+            if (generatedSql.startsWith("CONVERSATION:")) {
+                isDirectAnswer = true;
+                finalAnswer = generatedSql.replace("CONVERSATION:", "").trim();
+                break;
+            }
+
+            try {
+                safeSql = validateSqlQuery(generatedSql);
+            } catch (astError) {
+                console.error(`AST Parser Error Attempt ${attempt}:`, astError.message);
+                messages.push({ role: "assistant", content: generatedSql });
+                messages.push({ role: "user", content: `SQL syntax or security error: ${astError.message}. Fix the query and ONLY return the raw SELECT SQL.` });
+                continue;
+            }
+
+            try {
+                if (selectedPropertyId === 'stagathe') {
+                    console.log(`Proxying AI SQL to Backend 2 (St-Agathe)...`);
+                    const axios = require('axios');
+                    const backend2Url = 'https://saif-property2-client-railway-production.up.railway.app/api/internal/ai-execute';
+                    const serviceToken = process.env.INTERNAL_SERVICE_TOKEN || 'saif-ai-super-secret-token';
+                    
+                    const proxyResponse = await axios.post(backend2Url, { sql: safeSql }, {
+                        headers: { 'x-service-token': serviceToken }
+                    });
+                    resultData = proxyResponse.data.data;
+                } else {
+                    console.log(`Executing AI SQL on this backend's database (Masteko)...`);
+                    resultData = await prisma.$queryRawUnsafe(safeSql);
+                }
+                
+                // Context-Aware Verification Step
+                const verificationPrompt = `You generated this SQL: ${safeSql}\nIt returned this data: ${JSON.stringify(resultData).substring(0, 5000)}\nDoes this data logically answer the user's original question based on the business rules and schema? If yes, respond EXACTLY with the word "SUCCESS". If no (e.g., unexpected empty result, wrong logic, missing fields), generate a NEW, corrected SQL query. ONLY return the new SQL query without explanation.`;
+                
+                const verifyCompletion = await openai.chat.completions.create({
+                    model: "gpt-4o",
+                    messages: [...messages, { role: "assistant", content: generatedSql }, { role: "user", content: verificationPrompt }],
+                    temperature: 0,
+                });
+                
+                let verifyContent = verifyCompletion.choices[0].message.content.trim();
+                verifyContent = verifyContent.replace(/```sql/gi, '').replace(/```/g, '').trim();
+                
+                if (verifyContent === "SUCCESS") {
+                    break; // The data is correct
+                } else {
+                    // Logic failed, try the new query in the next loop
+                    console.log(`Verification failed on attempt ${attempt}. Retrying with new SQL...`);
+                    messages.push({ role: "assistant", content: generatedSql });
+                    messages.push({ role: "user", content: `The data was incorrect or missing. Using your corrected SQL: ${verifyContent}` });
+                    continue;
+                }
+            } catch (execError) {
+                console.error(`Execution Error Attempt ${attempt}:`, execError.message);
+                messages.push({ role: "assistant", content: generatedSql });
+                messages.push({ role: "user", content: `Database execution error: ${execError.message}. Check your column names against the schema and return a corrected SELECT query.` });
+                continue;
+            }
         }
-
-        // Bypass SQL validation and execution if the AI answered directly from the document context
-        if (generatedSql.startsWith("DOC_ANSWER:")) {
+        
+        if (isDirectAnswer) {
             return res.status(200).json({
                 success: true,
                 sqlGenerated: null,
                 isDocumentAnswer: true,
-                data: [{ answer: generatedSql.replace("DOC_ANSWER:", "").trim() }]
+                data: [{ answer: finalAnswer }],
+                answer: finalAnswer
             });
         }
-
-        // Bypass SQL validation if it's just a conversational response (e.g., "Hello!")
-        if (generatedSql.startsWith("CONVERSATION:")) {
-            return res.status(200).json({
-                success: true,
-                sqlGenerated: null,
-                isDocumentAnswer: true, // Reuse this flag to render it simply as text in the frontend
-                data: [{ answer: generatedSql.replace("CONVERSATION:", "").trim() }]
+        
+        // Final Humanization Step
+        if (!finalAnswer) {
+            const summarizePrompt = `Based on the user's original question ("${question}") and this database result: ${JSON.stringify(resultData).substring(0, 5000)}, write a short, natural, human-readable answer.`;
+            const summaryCompletion = await openai.chat.completions.create({
+                model: "gpt-4o-mini", // Use mini for fast summarization
+                messages: [{ role: "user", content: summarizePrompt }],
+                temperature: 0.5,
             });
+            finalAnswer = summaryCompletion.choices[0].message.content.trim();
         }
 
-        // 4. SECURITY CHECK: Validate the SQL using our AST parser (Code-Level Blocking)
-        let safeSql;
-        try {
-            safeSql = validateSqlQuery(generatedSql);
-        } catch (astError) {
-            console.error("AST Parser Error:", astError.message);
-            return res.status(400).json({ error: "The AI had trouble understanding the grammar of your question and could not securely convert it into database logic. Please rephrase!" });
-        }
-
-        // 5. Execute on the isolated database
-        let resultData;
-        
-        if (selectedPropertyId === 'stagathe') {
-            console.log(`Proxying AI SQL to Backend 2 (St-Agathe)...`);
-            const axios = require('axios');
-            const backend2Url = 'https://saif-property2-client-railway-production.up.railway.app/api/internal/ai-execute';
-            const serviceToken = process.env.INTERNAL_SERVICE_TOKEN || 'saif-ai-super-secret-token';
-            
-            try {
-                const proxyResponse = await axios.post(backend2Url, { sql: safeSql }, {
-                    headers: { 'x-service-token': serviceToken }
-                });
-                resultData = proxyResponse.data.data;
-            } catch (proxyErr) {
-                console.error("Backend 2 Proxy Error:", proxyErr.message);
-                throw new Error("Failed to execute query on St-Agathe database.");
-            }
-        } else {
-            console.log(`Executing AI SQL on this backend's database (Masteko)...`);
-            resultData = await prisma.$queryRawUnsafe(safeSql);
-        }
-
-        // 6. (Optional) You can send resultData back to OpenAI here to have it formatted nicely into a sentence.
-        // For now, we just return the raw JSON data to the frontend for tables/graphs.
-        
         return res.status(200).json({
             success: true,
             sqlGenerated: safeSql,
-            data: resultData
+            data: resultData,
+            answer: finalAnswer
         });
 
     } catch (error) {
