@@ -110,16 +110,19 @@ ${schema}
         let resultData = [];
         let finalAnswer = "";
         let isDirectAnswer = false;
+        let generatedSql = "";
         
         for (let attempt = 1; attempt <= 3; attempt++) {
-            const chatCompletion = await openai.chat.completions.create({
-                model: "gpt-4o",
-                messages: messages,
-                temperature: 0, 
-            });
+            if (attempt === 1 || !generatedSql) {
+                const chatCompletion = await openai.chat.completions.create({
+                    model: "gpt-4o",
+                    messages: messages,
+                    temperature: 0, 
+                });
 
-            let generatedSql = chatCompletion.choices[0].message.content.trim();
-            generatedSql = generatedSql.replace(/```sql/gi, '').replace(/```/g, '').trim();
+                generatedSql = chatCompletion.choices[0].message.content.trim();
+                generatedSql = generatedSql.replace(/```sql/gi, '').replace(/```/g, '').trim();
+            }
 
             if (generatedSql.startsWith("ERROR:")) {
                 return res.status(400).json({ error: "The AI could not find the required data to answer that question." });
@@ -143,6 +146,7 @@ ${schema}
                 console.error(`AST Parser Error Attempt ${attempt}:`, astError.message);
                 messages.push({ role: "assistant", content: generatedSql });
                 messages.push({ role: "user", content: `SQL syntax or security error: ${astError.message}. Fix the query and ONLY return the raw SELECT SQL.` });
+                generatedSql = ""; // Force OpenAI to regenerate next loop
                 continue;
             }
 
@@ -163,7 +167,8 @@ ${schema}
                 }
                 
                 // Context-Aware Verification Step
-                const verificationPrompt = `You generated this SQL: ${safeSql}\nIt returned this data: ${JSON.stringify(resultData).substring(0, 5000)}\nDoes this data logically answer the user's original question based on the business rules and schema? If yes, respond EXACTLY with the word "SUCCESS". If no (e.g., unexpected empty result, wrong logic, missing fields), generate a NEW, corrected SQL query. ONLY return the new SQL query without explanation.`;
+                const safeDataToVerify = Array.isArray(resultData) ? resultData.slice(0, 50) : resultData;
+                const verificationPrompt = `You generated this SQL: ${safeSql}\nIt returned this data: ${JSON.stringify(safeDataToVerify).substring(0, 5000)}\nDoes this data logically answer the user's original question based on the business rules and schema? If yes, respond EXACTLY with the word "SUCCESS". If no (e.g., unexpected empty result, wrong logic, missing fields), generate a NEW, corrected SQL query. ONLY return the new SQL query without explanation.`;
                 
                 const verifyCompletion = await openai.chat.completions.create({
                     model: "gpt-4o",
@@ -177,16 +182,18 @@ ${schema}
                 if (verifyContent === "SUCCESS") {
                     break; // The data is correct
                 } else {
-                    // Logic failed, try the new query in the next loop
+                    // Logic failed, use the verified SQL in the next loop
                     console.log(`Verification failed on attempt ${attempt}. Retrying with new SQL...`);
                     messages.push({ role: "assistant", content: generatedSql });
-                    messages.push({ role: "user", content: `The data was incorrect or missing. Using your corrected SQL: ${verifyContent}` });
+                    messages.push({ role: "user", content: `The data was incorrect or missing. I will use your corrected SQL: ${verifyContent}` });
+                    generatedSql = verifyContent; // Skip OpenAI generation and directly test this SQL next loop
                     continue;
                 }
             } catch (execError) {
                 console.error(`Execution Error Attempt ${attempt}:`, execError.message);
                 messages.push({ role: "assistant", content: generatedSql });
                 messages.push({ role: "user", content: `Database execution error: ${execError.message}. Check your column names against the schema and return a corrected SELECT query.` });
+                generatedSql = ""; // Force OpenAI to regenerate next loop
                 continue;
             }
         }
@@ -203,7 +210,8 @@ ${schema}
         
         // Final Humanization Step
         if (!finalAnswer) {
-            const summarizePrompt = `Based on the user's original question ("${question}") and this database result: ${JSON.stringify(resultData).substring(0, 5000)}, write a short, natural, human-readable answer.`;
+            const safeDataToSummarize = Array.isArray(resultData) ? resultData.slice(0, 50) : resultData;
+            const summarizePrompt = `Based on the user's original question ("${question}") and this database result: ${JSON.stringify(safeDataToSummarize).substring(0, 5000)}, write a short, natural, human-readable answer.`;
             const summaryCompletion = await openai.chat.completions.create({
                 model: "gpt-4o-mini", // Use mini for fast summarization
                 messages: [{ role: "user", content: summarizePrompt }],
