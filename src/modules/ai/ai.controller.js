@@ -115,7 +115,7 @@ ${schema}
         for (let attempt = 1; attempt <= 3; attempt++) {
             if (attempt === 1 || !generatedSql) {
                 const chatCompletion = await openai.chat.completions.create({
-                    model: "gpt-4o",
+                    model: "gpt-4o-mini",
                     messages: messages,
                     temperature: 0, 
                 });
@@ -171,7 +171,7 @@ ${schema}
                 const verificationPrompt = `You generated this SQL: ${safeSql}\nIt returned this data: ${JSON.stringify(safeDataToVerify).substring(0, 5000)}\nDoes this data logically answer the user's original question based on the business rules and schema? If yes, respond EXACTLY with the word "SUCCESS". If no (e.g., unexpected empty result, wrong logic, missing fields), generate a NEW, corrected SQL query. ONLY return the new SQL query without explanation.`;
                 
                 const verifyCompletion = await openai.chat.completions.create({
-                    model: "gpt-4o",
+                    model: "gpt-4o-mini",
                     messages: [...messages, { role: "assistant", content: generatedSql }, { role: "user", content: verificationPrompt }],
                     temperature: 0,
                 });
