@@ -37,22 +37,29 @@ const queryAI = async (req, res) => {
 
         // 1.5. Check Qdrant for relevant unstructured documents (RAG)
         let documentContext = "No additional document context found.";
-        try {
-            // Generate embedding for user's question
-            const embedResponse = await openai.embeddings.create({
-                model: "text-embedding-3-small",
-                input: question,
-            });
-            const queryVector = embedResponse.data[0].embedding;
-            
-            // Search Qdrant
-            const relevantChunks = await searchDocuments(queryVector, selectedPropertyId, 3);
-            if (relevantChunks && relevantChunks.length > 0) {
-                documentContext = "Relevant Document Excerpts:\n" + relevantChunks.map((chunk, i) => `[Excerpt ${i+1}]: ${chunk}`).join("\n\n");
+        
+        // Only perform slow vector searches if the user explicitly asks about documents
+        const docKeywords = ['document', 'file', 'upload', 'lease agreement', 'contract', 'pdf', 'inspection report', 'attachment'];
+        const needsDocSearch = docKeywords.some(keyword => question.toLowerCase().includes(keyword));
+
+        if (needsDocSearch) {
+            try {
+                // Generate embedding for user's question
+                const embedResponse = await openai.embeddings.create({
+                    model: "text-embedding-3-small",
+                    input: question,
+                });
+                const queryVector = embedResponse.data[0].embedding;
+                
+                // Search Qdrant
+                const relevantChunks = await searchDocuments(queryVector, selectedPropertyId, 3);
+                if (relevantChunks && relevantChunks.length > 0) {
+                    documentContext = "Relevant Document Excerpts:\n" + relevantChunks.map((chunk, i) => `[Excerpt ${i+1}]: ${chunk}`).join("\n\n");
+                }
+            } catch (qdrantErr) {
+                console.error("Qdrant Search Error:", qdrantErr.message);
+                // Continue without document context if Qdrant fails
             }
-        } catch (qdrantErr) {
-            console.error("Qdrant Search Error:", qdrantErr.message);
-            // Continue without document context if Qdrant fails
         }
 
         // 1.8 Dynamic Date Context
