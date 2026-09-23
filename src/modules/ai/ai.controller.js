@@ -5,6 +5,10 @@ const { validateSqlQuery } = require('../../services/aiValidator.service');
 const { PrismaClient } = require('@prisma/client');
 const { searchDocuments } = require('../../services/qdrant.service');
 
+// Cache schema globally
+const schemaPath = path.join(__dirname, '../../../prisma/schema.prisma');
+const schema = fs.readFileSync(schemaPath, 'utf8');
+
 // Polyfill to allow JSON.stringify to serialize BigInts (like COUNT(*)) returned by Prisma queryRaw
 BigInt.prototype.toJSON = function () {
     return Number(this);
@@ -30,10 +34,6 @@ const queryAI = async (req, res) => {
         if (!selectedPropertyId) {
             return res.status(400).json({ error: "selectedPropertyId is required for multi-database routing." });
         }
-
-        // 1. Load your Prisma schema to give the AI context of your database structure
-        const schemaPath = path.join(__dirname, '../../../prisma/schema.prisma');
-        const schema = fs.readFileSync(schemaPath, 'utf8');
 
         // 1.5. Check Qdrant for relevant unstructured documents (RAG)
         let documentContext = "No additional document context found.";
@@ -112,42 +112,33 @@ ${schema}
         let isDirectAnswer = false;
         let generatedSql = "";
         
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            if (attempt === 1 || !generatedSql) {
-                const chatCompletion = await openai.chat.completions.create({
-                    model: "gpt-4o",
-                    messages: messages,
-                    temperature: 0, 
-                });
+        // 3. Generate SQL (One Attempt - No Retry Loop)
+        const chatCompletion = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: messages,
+            temperature: 0, 
+        });
 
-                generatedSql = chatCompletion.choices[0].message.content.trim();
-                generatedSql = generatedSql.replace(/```sql/gi, '').replace(/```/g, '').trim();
-            }
+        generatedSql = chatCompletion.choices[0].message.content.trim();
+        generatedSql = generatedSql.replace(/```sql/gi, '').replace(/```/g, '').trim();
 
-            if (generatedSql.startsWith("ERROR:")) {
-                return res.status(400).json({ error: "The AI could not find the required data to answer that question." });
-            }
+        if (generatedSql.startsWith("ERROR:")) {
+            return res.status(400).json({ error: "The AI could not find the required data to answer that question." });
+        }
 
-            if (generatedSql.startsWith("DOC_ANSWER:")) {
-                isDirectAnswer = true;
-                finalAnswer = generatedSql.replace("DOC_ANSWER:", "").trim();
-                break;
-            }
-
-            if (generatedSql.startsWith("CONVERSATION:")) {
-                isDirectAnswer = true;
-                finalAnswer = generatedSql.replace("CONVERSATION:", "").trim();
-                break;
-            }
-
+        if (generatedSql.startsWith("DOC_ANSWER:")) {
+            isDirectAnswer = true;
+            finalAnswer = generatedSql.replace("DOC_ANSWER:", "").trim();
+        } else if (generatedSql.startsWith("CONVERSATION:")) {
+            isDirectAnswer = true;
+            finalAnswer = generatedSql.replace("CONVERSATION:", "").trim();
+        } else {
+            // Validate and Execute
             try {
                 safeSql = validateSqlQuery(generatedSql);
             } catch (astError) {
-                console.error(`AST Parser Error Attempt ${attempt}:`, astError.message);
-                messages.push({ role: "assistant", content: generatedSql });
-                messages.push({ role: "user", content: `SQL syntax or security error: ${astError.message}. Fix the query and ONLY return the raw SELECT SQL.` });
-                generatedSql = ""; // Force OpenAI to regenerate next loop
-                continue;
+                console.error(`AST Parser Error:`, astError.message);
+                return res.status(400).json({ error: `I misunderstood the database schema. Error: ${astError.message}` });
             }
 
             try {
@@ -165,36 +156,9 @@ ${schema}
                     console.log(`Executing AI SQL on this backend's database (Masteko)...`);
                     resultData = await prisma.$queryRawUnsafe(safeSql);
                 }
-                
-                // Context-Aware Verification Step
-                const safeDataToVerify = Array.isArray(resultData) ? resultData.slice(0, 50) : resultData;
-                const verificationPrompt = `You generated this SQL: ${safeSql}\nIt returned this data: ${JSON.stringify(safeDataToVerify).substring(0, 5000)}\nDoes this data logically answer the user's original question based on the business rules and schema? If yes, respond EXACTLY with the word "SUCCESS". If no (e.g., unexpected empty result, wrong logic, missing fields), generate a NEW, corrected SQL query. ONLY return the new SQL query without explanation.`;
-                
-                const verifyCompletion = await openai.chat.completions.create({
-                    model: "gpt-4o",
-                    messages: [...messages, { role: "assistant", content: generatedSql }, { role: "user", content: verificationPrompt }],
-                    temperature: 0,
-                });
-                
-                let verifyContent = verifyCompletion.choices[0].message.content.trim();
-                verifyContent = verifyContent.replace(/```sql/gi, '').replace(/```/g, '').trim();
-                
-                if (verifyContent === "SUCCESS") {
-                    break; // The data is correct
-                } else {
-                    // Logic failed, use the verified SQL in the next loop
-                    console.log(`Verification failed on attempt ${attempt}. Retrying with new SQL...`);
-                    messages.push({ role: "assistant", content: generatedSql });
-                    messages.push({ role: "user", content: `The data was incorrect or missing. I will use your corrected SQL: ${verifyContent}` });
-                    generatedSql = verifyContent; // Skip OpenAI generation and directly test this SQL next loop
-                    continue;
-                }
             } catch (execError) {
-                console.error(`Execution Error Attempt ${attempt}:`, execError.message);
-                messages.push({ role: "assistant", content: generatedSql });
-                messages.push({ role: "user", content: `Database execution error: ${execError.message}. Check your column names against the schema and return a corrected SELECT query.` });
-                generatedSql = ""; // Force OpenAI to regenerate next loop
-                continue;
+                console.error(`Execution Error:`, execError.message);
+                return res.status(500).json({ error: `A database execution error occurred: ${execError.message}` });
             }
         }
         
