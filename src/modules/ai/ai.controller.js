@@ -152,7 +152,7 @@ ${schema}
                 if (selectedPropertyId === 'stagathe') {
                     console.log(`Proxying AI SQL to Backend 2 (St-Agathe)...`);
                     const axios = require('axios');
-                    const backend2Url = 'https://saif-property2-client-railway-production.up.railway.app/api/internal/ai-execute';
+                    const backend2Url = `${process.env.BACKEND2_URL}/api/internal/ai-execute`;
                     const serviceToken = process.env.INTERNAL_SERVICE_TOKEN || 'saif-ai-super-secret-token';
                     
                     const proxyResponse = await axios.post(backend2Url, { sql: safeSql }, {
